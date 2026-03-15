@@ -5,28 +5,23 @@ import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 
 export default function LoginPage() {
-
   const router = useRouter();
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
 
-  const [email,setEmail] = useState("");
-  const [password,setPassword] = useState("");
-
-  const [errorMessage,setErrorMessage] = useState<string|null>(null);
-  const [isLoading,setIsLoading] = useState(false);
-
-  async function handleLogin(e:React.FormEvent){
-
+  async function handleLogin(e: React.FormEvent) {
     e.preventDefault();
-
     setErrorMessage(null);
     setIsLoading(true);
 
     const { data, error } = await supabase.auth.signInWithPassword({
       email,
-      password
+      password,
     });
 
-    if(error){
+    if (error) {
       setIsLoading(false);
       setErrorMessage(error.message);
       return;
@@ -34,35 +29,23 @@ export default function LoginPage() {
 
     const user = data.user;
 
-    if(!user){
-      setErrorMessage("Login failed.");
-      setIsLoading(false);
-      return;
-    }
-
-    const { data:profile, error:profileError } = await supabase
+    const { data: profile, error: profileError } = await supabase
       .from("profiles")
       .select("role")
-      .eq("id",user.id)
+      .eq("id", user.id)
       .single();
 
-    if(profileError){
-      console.error(profileError);
-      setErrorMessage(profileError.message);
-      setIsLoading(false);
+    setIsLoading(false);
+
+    if (profileError || !profile) {
+      setErrorMessage("Unable to load profile.");
+      await supabase.auth.signOut();
       return;
     }
 
-    if(!profile){
-      setErrorMessage("No profile found for this account.");
-      setIsLoading(false);
-      return;
-    }
-
-    if(profile.role !== "dispatch"){
+    if (profile.role !== "dispatch") {
       setErrorMessage("This account is not authorized for dispatcher access.");
       await supabase.auth.signOut();
-      setIsLoading(false);
       return;
     }
 
@@ -72,13 +55,8 @@ export default function LoginPage() {
 
   return (
     <main className="mx-auto flex min-h-screen max-w-md items-center px-6">
-
       <div className="w-full rounded-xl border bg-white p-6 shadow-sm">
-
-        <h1 className="mb-2 text-2xl font-semibold text-black">
-          Dispatcher Login
-        </h1>
-
+        <h1 className="mb-2 text-2xl font-semibold text-black">Dispatcher Login</h1>
         <p className="mb-6 text-sm text-gray-500">
           Sign in with your dispatcher email and password.
         </p>
@@ -90,30 +68,23 @@ export default function LoginPage() {
         )}
 
         <form onSubmit={handleLogin} className="space-y-4">
-
           <div>
-            <label className="mb-1 block text-sm font-medium text-black">
-              Email
-            </label>
-
+            <label className="mb-1 block text-sm font-medium text-black">Email</label>
             <input
               type="email"
               value={email}
-              onChange={(e)=>setEmail(e.target.value)}
+              onChange={(e) => setEmail(e.target.value)}
               className="w-full rounded border border-gray-300 bg-white px-3 py-2 text-gray-900"
               required
             />
           </div>
 
           <div>
-            <label className="mb-1 block text-sm font-medium text-black">
-              Password
-            </label>
-
+            <label className="mb-1 block text-sm font-medium text-black">Password</label>
             <input
               type="password"
               value={password}
-              onChange={(e)=>setPassword(e.target.value)}
+              onChange={(e) => setPassword(e.target.value)}
               className="w-full rounded border border-gray-300 bg-white px-3 py-2 text-gray-900"
               required
             />
@@ -126,11 +97,8 @@ export default function LoginPage() {
           >
             {isLoading ? "Signing in..." : "Sign in"}
           </button>
-
         </form>
-
       </div>
-
     </main>
   );
 }

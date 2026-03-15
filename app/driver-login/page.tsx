@@ -4,29 +4,25 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 
-export default function LoginPage() {
-
+export default function DriverLoginPage() {
   const router = useRouter();
 
-  const [email,setEmail] = useState("");
-  const [password,setPassword] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
 
-  const [errorMessage,setErrorMessage] = useState<string|null>(null);
-  const [isLoading,setIsLoading] = useState(false);
-
-  async function handleLogin(e:React.FormEvent){
-
+  async function handleLogin(e: React.FormEvent) {
     e.preventDefault();
-
     setErrorMessage(null);
     setIsLoading(true);
 
     const { data, error } = await supabase.auth.signInWithPassword({
       email,
-      password
+      password,
     });
 
-    if(error){
+    if (error) {
       setIsLoading(false);
       setErrorMessage(error.message);
       return;
@@ -34,53 +30,63 @@ export default function LoginPage() {
 
     const user = data.user;
 
-    if(!user){
-      setErrorMessage("Login failed.");
+    if (!user) {
       setIsLoading(false);
+      setErrorMessage("Login failed.");
       return;
     }
 
-    const { data:profile, error:profileError } = await supabase
+    const { data: profile, error: profileError } = await supabase
       .from("profiles")
-      .select("role")
-      .eq("id",user.id)
+      .select("role, driver_id")
+      .eq("id", user.id)
       .single();
 
-    if(profileError){
-      console.error(profileError);
-      setErrorMessage(profileError.message);
-      setIsLoading(false);
-      return;
-    }
-
-    if(!profile){
-      setErrorMessage("No profile found for this account.");
-      setIsLoading(false);
-      return;
-    }
-
-    if(profile.role !== "dispatch"){
-      setErrorMessage("This account is not authorized for dispatcher access.");
+    if (profileError || !profile) {
       await supabase.auth.signOut();
       setIsLoading(false);
+      setErrorMessage("No driver profile found for this account.");
       return;
     }
 
-    router.push("/weekly");
+    if (profile.role !== "driver" || !profile.driver_id) {
+      await supabase.auth.signOut();
+      setIsLoading(false);
+      setErrorMessage("This account is not authorized for driver access.");
+      return;
+    }
+
+    const { data: driver, error: driverError } = await supabase
+      .from("drivers")
+      .select("approval_status")
+      .eq("id", profile.driver_id)
+      .single();
+
+    if (driverError || !driver) {
+      await supabase.auth.signOut();
+      setIsLoading(false);
+      setErrorMessage("Unable to load driver record.");
+      return;
+    }
+
+    if (driver.approval_status === "blocked") {
+      await supabase.auth.signOut();
+      setIsLoading(false);
+      setErrorMessage("This driver account has been removed from schedule.");
+      return;
+    }
+
+    setIsLoading(false);
+    router.push("/availability");
     router.refresh();
   }
 
   return (
     <main className="mx-auto flex min-h-screen max-w-md items-center px-6">
-
       <div className="w-full rounded-xl border bg-white p-6 shadow-sm">
-
-        <h1 className="mb-2 text-2xl font-semibold text-black">
-          Dispatcher Login
-        </h1>
-
+        <h1 className="mb-2 text-2xl font-semibold text-black">Driver Login</h1>
         <p className="mb-6 text-sm text-gray-500">
-          Sign in with your dispatcher email and password.
+          Sign in with your email and password.
         </p>
 
         {errorMessage && (
@@ -90,16 +96,14 @@ export default function LoginPage() {
         )}
 
         <form onSubmit={handleLogin} className="space-y-4">
-
           <div>
             <label className="mb-1 block text-sm font-medium text-black">
               Email
             </label>
-
             <input
               type="email"
               value={email}
-              onChange={(e)=>setEmail(e.target.value)}
+              onChange={(e) => setEmail(e.target.value)}
               className="w-full rounded border border-gray-300 bg-white px-3 py-2 text-gray-900"
               required
             />
@@ -109,11 +113,10 @@ export default function LoginPage() {
             <label className="mb-1 block text-sm font-medium text-black">
               Password
             </label>
-
             <input
               type="password"
               value={password}
-              onChange={(e)=>setPassword(e.target.value)}
+              onChange={(e) => setPassword(e.target.value)}
               className="w-full rounded border border-gray-300 bg-white px-3 py-2 text-gray-900"
               required
             />
@@ -126,11 +129,8 @@ export default function LoginPage() {
           >
             {isLoading ? "Signing in..." : "Sign in"}
           </button>
-
         </form>
-
       </div>
-
     </main>
   );
 }
