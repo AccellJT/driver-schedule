@@ -32,15 +32,6 @@ function parseLocalDate(value: string) {
   return new Date(year, month - 1, day);
 }
 
-function formatDateLabel(value: string) {
-  const d = parseLocalDate(value);
-  return d.toLocaleDateString("en-US", {
-    weekday: "short",
-    month: "numeric",
-    day: "numeric",
-  });
-}
-
 function formatFullDateLabel(value: string) {
   const d = parseLocalDate(value);
   return d.toLocaleDateString("en-US", {
@@ -174,6 +165,7 @@ export default function AvailabilityPage() {
         .from("availability_slots")
         .select("*")
         .eq("driver_id", selectedDriverId)
+        .gte("service_date", localDateIso(new Date()))
         .order("service_date", { ascending: true })
         .order("start_time", { ascending: true });
 
@@ -209,6 +201,7 @@ export default function AvailabilityPage() {
       .from("availability_slots")
       .select("*")
       .eq("driver_id", driverId)
+      .gte("service_date", localDateIso(new Date()))
       .order("service_date", { ascending: true })
       .order("start_time", { ascending: true });
 
@@ -463,7 +456,7 @@ export default function AvailabilityPage() {
 
           {groupedSlots.length === 0 ? (
             <div className="rounded border border-dashed p-4 text-sm text-gray-500">
-              No availability slots found.
+              No current or future availability slots found.
             </div>
           ) : (
             <div className="space-y-4">
