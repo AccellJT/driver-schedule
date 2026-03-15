@@ -41,6 +41,16 @@ function formatDateLabel(value: string) {
   });
 }
 
+function formatFullDateLabel(value: string) {
+  const d = parseLocalDate(value);
+  return d.toLocaleDateString("en-US", {
+    weekday: "short",
+    month: "long",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
 function formatTime(value: string) {
   const [hours, minutes] = value.slice(0, 5).split(":").map(Number);
   const suffix = hours >= 12 ? "pm" : "am";
@@ -130,13 +140,11 @@ export default function AvailabilityPage() {
     if (!authChecked) return;
 
     async function loadDrivers() {
-      const query = supabase
+      const { data, error } = await supabase
         .from("drivers")
         .select("*")
         .in("approval_status", ["pending", "approved"])
         .order("full_name");
-
-      const { data, error } = await query;
 
       if (error) {
         setErrorMessage(error.message);
@@ -166,9 +174,8 @@ export default function AvailabilityPage() {
         .from("availability_slots")
         .select("*")
         .eq("driver_id", selectedDriverId)
-        .gte("service_date", localDateIso(new Date()))
-        .order("service_date")
-        .order("start_time");
+        .order("service_date", { ascending: true })
+        .order("start_time", { ascending: true });
 
       if (error) {
         setErrorMessage(error.message);
@@ -186,26 +193,15 @@ export default function AvailabilityPage() {
     [drivers, selectedDriverId]
   );
 
-  const weekDays = useMemo(() => {
-    const today = new Date();
-    return Array.from({ length: 7 }, (_, i) => {
-      const d = new Date(today);
-      d.setDate(today.getDate() + i);
-      return {
-        iso: localDateIso(d),
-        labelTop: d.toLocaleDateString("en-US", { weekday: "short" }),
-        labelBottom: d.toLocaleDateString("en-US", { month: "numeric", day: "numeric" }),
-      };
-    });
-  }, []);
-
-  const slotsByDate = useMemo(() => {
+  const groupedSlots = useMemo(() => {
     const map: Record<string, AvailabilitySlot[]> = {};
+
     for (const slot of slots) {
       if (!map[slot.service_date]) map[slot.service_date] = [];
       map[slot.service_date].push(slot);
     }
-    return map;
+
+    return Object.entries(map).sort(([a], [b]) => a.localeCompare(b));
   }, [slots]);
 
   async function refreshSlots(driverId: string) {
@@ -213,9 +209,8 @@ export default function AvailabilityPage() {
       .from("availability_slots")
       .select("*")
       .eq("driver_id", driverId)
-      .gte("service_date", localDateIso(new Date()))
-      .order("service_date")
-      .order("start_time");
+      .order("service_date", { ascending: true })
+      .order("start_time", { ascending: true });
 
     if (error) {
       setErrorMessage(error.message);
@@ -235,7 +230,11 @@ export default function AvailabilityPage() {
       return;
     }
 
-    if (currentRole === "driver" && currentProfileDriverId && selectedDriverId !== currentProfileDriverId) {
+    if (
+      currentRole === "driver" &&
+      currentProfileDriverId &&
+      selectedDriverId !== currentProfileDriverId
+    ) {
       setErrorMessage("You can only submit availability for your own driver record.");
       return;
     }
@@ -300,12 +299,12 @@ export default function AvailabilityPage() {
   }
 
   if (!authChecked) {
-    return <div className="p-10 text-sm text-gray-500">Checking access...</div>;
+    return <div className="p-6 text-sm text-gray-500 sm:p-10">Checking access...</div>;
   }
 
   return (
-    <main className="mx-auto max-w-5xl p-8">
-      <h1 className="mb-2 text-2xl font-semibold">Availability Submission</h1>
+    <main className="mx-auto max-w-6xl p-4 sm:p-6 lg:p-8">
+      <h1 className="mb-2 text-xl font-semibold sm:text-2xl">Availability Submission</h1>
       <p className="mb-6 text-sm text-gray-500">
         Drivers can submit one or more availability windows per day. Dispatch
         can use this same page for quick updates.
@@ -323,8 +322,8 @@ export default function AvailabilityPage() {
         </div>
       )}
 
-      <div className="grid gap-6 lg:grid-cols-[420px,1fr]">
-        <section className="rounded-xl border border-white-500 p-5 shadow-sm">
+      <div className="grid gap-6 lg:grid-cols-[380px,1fr]">
+        <section className="rounded-xl border p-4 shadow-sm sm:p-5">
           <h2 className="mb-4 text-lg font-medium">Add Availability</h2>
 
           <form className="space-y-4" onSubmit={handleSubmit}>
@@ -347,7 +346,7 @@ export default function AvailabilityPage() {
             )}
 
             {currentRole === "driver" && selectedDriver && (
-              <div className="rounded border border-gray-200 bg-white p-3 text-sm text-right">
+              <div className="rounded border border-gray-200 bg-white p-3 text-sm">
                 <div className="font-medium text-gray-900">{selectedDriver.full_name}</div>
                 <div className="text-gray-500">
                   {selectedDriver.vehicle_label ? selectedDriver.vehicle_label : "No vehicle"}
@@ -357,8 +356,8 @@ export default function AvailabilityPage() {
 
             <div>
               <label className="mb-1 block text-sm font-medium">Date mode</label>
-              <div className="flex items-center gap-4">
-                <label className="flex items-center gap-1 text-sm">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-4">
+                <label className="flex items-center gap-2 text-sm">
                   <input
                     type="radio"
                     name="dateMode"
@@ -369,7 +368,7 @@ export default function AvailabilityPage() {
                   />
                   Single date
                 </label>
-                <label className="flex items-center gap-1 text-sm">
+                <label className="flex items-center gap-2 text-sm">
                   <input
                     type="radio"
                     name="dateMode"
@@ -394,7 +393,7 @@ export default function AvailabilityPage() {
                 />
               </div>
             ) : (
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div>
                   <label className="mb-1 block text-sm font-medium">Start date</label>
                   <input
@@ -417,7 +416,7 @@ export default function AvailabilityPage() {
               </div>
             )}
 
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div>
                 <label className="mb-1 block text-sm font-medium">Start time</label>
                 <input
@@ -442,14 +441,14 @@ export default function AvailabilityPage() {
             <button
               type="submit"
               disabled={isSaving}
-              className="rounded bg-blue-600 px-4 py-2 text-white disabled:opacity-50"
+              className="w-full rounded bg-blue-600 px-4 py-2 text-white disabled:opacity-50 sm:w-auto"
             >
               {isSaving ? "Saving..." : "Save availability"}
             </button>
           </form>
         </section>
 
-        <section className="rounded-xl border bg-white-100 p-5 shadow-sm">
+        <section className="rounded-xl border p-4 shadow-sm sm:p-5">
           <div className="mb-4">
             <h2 className="text-lg font-medium">Existing Availability</h2>
             {selectedDriver && (
@@ -462,46 +461,46 @@ export default function AvailabilityPage() {
             )}
           </div>
 
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            {weekDays.map((day) => {
-              const daySlots = slotsByDate[day.iso] ?? [];
-              return (
+          {groupedSlots.length === 0 ? (
+            <div className="rounded border border-dashed p-4 text-sm text-gray-500">
+              No availability slots found.
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {groupedSlots.map(([date, daySlots]) => (
                 <div
-                  key={day.iso}
-                  className="rounded border border-gray-200 bg-white p-3"
+                  key={date}
+                  className="rounded-lg border border-gray-200 bg-white p-3 sm:p-4"
                 >
-                  <div className="mb-2 text-center text-xs font-medium text-gray-500">
-                    <div>{day.labelTop}</div>
-                    <div>{day.labelBottom}</div>
-                  </div>
-                  {daySlots.length === 0 ? (
-                    <p className="rounded border border-dashed p-2 text-center text-xs text-gray-400">
-                      —
-                    </p>
-                  ) : (
-                    <div className="space-y-1">
-                      {daySlots.map((slot) => (
-                        <div
-                          key={slot.id}
-                          className="rounded border border-gray-200 bg-gray-50 p-2 text-xs"
-                        >
-                          <div className="mb-1 font-medium text-gray-700">
-                            {formatTime(slot.start_time)} - {formatTime(slot.end_time)}
-                          </div>
-                          <button
-                            onClick={() => handleDelete(slot.id)}
-                            className="w-full rounded border border-red-300 bg-red-50 px-1 py-1 text-[11px] text-red-700 hover:bg-red-100"
-                          >
-                            Delete
-                          </button>
-                        </div>
-                      ))}
+                  <div className="mb-3 border-b border-gray-100 pb-2">
+                    <div className="text-sm font-semibold text-gray-900">
+                      {formatFullDateLabel(date)}
                     </div>
-                  )}
+                  </div>
+
+                  <div className="space-y-2">
+                    {daySlots.map((slot) => (
+                      <div
+                        key={slot.id}
+                        className="flex flex-col gap-2 rounded border border-gray-200 bg-gray-50 p-3 sm:flex-row sm:items-center sm:justify-between"
+                      >
+                        <div className="text-sm font-medium text-gray-700">
+                          {formatTime(slot.start_time)} - {formatTime(slot.end_time)}
+                        </div>
+
+                        <button
+                          onClick={() => handleDelete(slot.id)}
+                          className="w-full rounded border border-red-300 bg-red-50 px-2 py-2 text-xs font-medium text-red-700 hover:bg-red-100 sm:w-auto"
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    ))}
+                  </div>
                 </div>
-              );
-            })}
-          </div>
+              ))}
+            </div>
+          )}
         </section>
       </div>
     </main>
