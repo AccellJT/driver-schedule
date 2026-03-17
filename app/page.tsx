@@ -1,136 +1,44 @@
 "use client";
 
-import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { supabase } from "@/lib/supabase";
 
-export default function LoginPage() {
-
+export default function HomePage() {
   const router = useRouter();
 
-  const [email,setEmail] = useState("");
-  const [password,setPassword] = useState("");
-
-  const [errorMessage,setErrorMessage] = useState<string|null>(null);
-  const [isLoading,setIsLoading] = useState(false);
-
-  async function handleLogin(e:React.FormEvent){
-
-    e.preventDefault();
-
-    setErrorMessage(null);
-    setIsLoading(true);
-
-    const { data, error } = await supabase.auth.signInWithPassword({
-      email,
-      password
-    });
-
-    if(error){
-      setIsLoading(false);
-      setErrorMessage(error.message);
-      return;
-    }
-
-    const user = data.user;
-
-    if(!user){
-      setErrorMessage("Login failed.");
-      setIsLoading(false);
-      return;
-    }
-
-    const { data:profile, error:profileError } = await supabase
-      .from("profiles")
-      .select("role")
-      .eq("id",user.id)
-      .single();
-
-    if(profileError){
-      console.error(profileError);
-      setErrorMessage(profileError.message);
-      setIsLoading(false);
-      return;
-    }
-
-    if(!profile){
-      setErrorMessage("No profile found for this account.");
-      setIsLoading(false);
-      return;
-    }
-
-    if(profile.role !== "dispatch"){
-      setErrorMessage("This account is not authorized for dispatcher access.");
-      await supabase.auth.signOut();
-      setIsLoading(false);
-      return;
-    }
-
-    router.push("/weekly");
-    router.refresh();
-  }
-
   return (
-    <main className="mx-auto flex min-h-screen max-w-md items-center px-6">
+    <main className="flex min-h-screen items-center justify-center bg-gradient-to-br from-gray-100 to-gray-200 dark:from-zinc-900 dark:to-zinc-800">
+      <div className="w-full max-w-md rounded-2xl bg-white p-8 shadow-xl dark:bg-zinc-900">
+        <div className="mb-8 text-center">
+          {/* Replace with your logo */}
+          <div className="mb-4 text-2xl font-bold">Accell</div>
+          <h1 className="text-xl font-semibold text-zinc-900 dark:text-zinc-100">
+            Welcome to Accell Drive
+          </h1>
+          <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">
+            Select your portal to continue
+          </p>
+        </div>
 
-      <div className="w-full rounded-xl border bg-white p-6 shadow-sm">
-
-        <h1 className="mb-2 text-2xl font-semibold text-black">
-          Dispatcher Login
-        </h1>
-
-        <p className="mb-6 text-sm text-gray-500">
-          Sign in with your dispatcher email and password.
-        </p>
-
-        {errorMessage && (
-          <div className="mb-4 rounded border border-red-300 bg-red-50 p-3 text-sm text-red-700">
-            {errorMessage}
-          </div>
-        )}
-
-        <form onSubmit={handleLogin} className="space-y-4">
-
-          <div>
-            <label className="mb-1 block text-sm font-medium text-black">
-              Email
-            </label>
-
-            <input
-              type="email"
-              value={email}
-              onChange={(e)=>setEmail(e.target.value)}
-              className="w-full rounded border border-gray-300 bg-white px-3 py-2 text-gray-900"
-              required
-            />
-          </div>
-
-          <div>
-            <label className="mb-1 block text-sm font-medium text-black">
-              Password
-            </label>
-
-            <input
-              type="password"
-              value={password}
-              onChange={(e)=>setPassword(e.target.value)}
-              className="w-full rounded border border-gray-300 bg-white px-3 py-2 text-gray-900"
-              required
-            />
-          </div>
-
+        <div className="space-y-4">
           <button
-            type="submit"
-            disabled={isLoading}
-            className="w-full rounded bg-blue-600 px-4 py-2 text-white disabled:opacity-50"
+            onClick={() => router.push("/login")}
+            className="w-full rounded-lg bg-blue-600 px-4 py-3 text-sm font-medium text-white hover:bg-blue-700"
           >
-            {isLoading ? "Signing in..." : "Sign in"}
+            Dispatcher Login
           </button>
 
-        </form>
+          <button
+            onClick={() => router.push("/driver-login")}
+            className="w-full rounded-lg border border-zinc-300 bg-white px-4 py-3 text-sm font-medium text-zinc-800 hover:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700"
+          >
+            Contractor Login
+          </button>
+        </div>
 
+        <div className="mt-6 text-center text-xs text-zinc-500 dark:text-zinc-400">
+          © {new Date().getFullYear()} Accell
+        </div>
       </div>
-
     </main>
   );
 }
