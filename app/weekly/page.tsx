@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 
 type DriverApprovalStatus = "pending" | "approved" | "blocked";
+type AppRole = "admin" | "dispatch";
 
 type Driver = {
   id: string;
@@ -201,6 +202,7 @@ export default function WeeklyPage() {
   const [isSavingCell, setIsSavingCell] = useState(false);
   const [confirmRemoveDriverId, setConfirmRemoveDriverId] = useState<string | null>(null);
   const [authChecked, setAuthChecked] = useState(false);
+  const [currentRole, setCurrentRole] = useState<AppRole | null>(null);
 
   const [isAddDriverOpen, setIsAddDriverOpen] = useState(false);
   const [newDriverName, setNewDriverName] = useState("");
@@ -273,12 +275,17 @@ export default function WeeklyPage() {
         .eq("id", user.id)
         .single();
 
-      if (error || !profile || profile.role !== "dispatch") {
+      if (
+        error ||
+        !profile ||
+        (profile.role !== "dispatch" && profile.role !== "admin")
+      ) {
         await supabase.auth.signOut();
         router.push("/login");
         return;
       }
 
+      setCurrentRole(profile.role as AppRole);
       setAuthChecked(true);
     }
 
@@ -290,6 +297,8 @@ export default function WeeklyPage() {
     const weekEnd = weekDays[weekDays.length - 1]?.iso;
 
     if (!weekStart || !weekEnd) return;
+
+    setErrorMessage(null);
 
     const [
       { data: driverData, error: driverError },
@@ -319,7 +328,6 @@ export default function WeeklyPage() {
       return;
     }
 
-    setErrorMessage(null);
     setDrivers((driverData ?? []) as Driver[]);
     setSlots((slotData ?? []) as AvailabilitySlot[]);
   }, [weekDays]);
@@ -473,7 +481,6 @@ export default function WeeklyPage() {
       .eq("id", driverId);
 
     if (error) {
-      console.error("Driver status update error:", error);
       setErrorMessage(error.message);
       return;
     }
@@ -515,19 +522,14 @@ export default function WeeklyPage() {
     ]);
 
     if (insertError) {
-        setIsAddingDriver(false);
-        console.error("Add driver error message:", insertError.message);
-        console.error("Add driver error details:", insertError.details);
-        console.error("Add driver error hint:", insertError.hint);
-        console.error("Add driver error code:", insertError.code);
-
-        setErrorMessage(
-            insertError.message ||
-            insertError.details ||
-            insertError.hint ||
-            "Unable to add driver."
-        );
-        return;
+      setIsAddingDriver(false);
+      setErrorMessage(
+        insertError.message ||
+          insertError.details ||
+          insertError.hint ||
+          "Unable to add driver."
+      );
+      return;
     }
 
     const { error: magicLinkError } = await supabase.auth.signInWithOtp({
@@ -539,8 +541,13 @@ export default function WeeklyPage() {
 
     setIsAddingDriver(false);
 
+    setNewDriverName("");
+    setNewDriverEmail("");
+    setNewDriverVehicle("");
+    setIsAddDriverOpen(false);
+
     if (magicLinkError) {
-      console.error("Magic link error:", magicLinkError);
+      setSuccessMessage("Driver added.");
       setErrorMessage(
         `Driver added, but setup email could not be sent: ${magicLinkError.message}`
       );
@@ -548,10 +555,6 @@ export default function WeeklyPage() {
       return;
     }
 
-    setNewDriverName("");
-    setNewDriverEmail("");
-    setNewDriverVehicle("");
-    setIsAddDriverOpen(false);
     setSuccessMessage("Driver added and setup email sent.");
     await loadData();
   }
@@ -561,6 +564,9 @@ export default function WeeklyPage() {
     router.push("/login");
   }
 
+  const tableMinWidth =
+    viewDays === 1 ? "min-w-[720px]" : viewDays === 3 ? "min-w-[900px]" : "min-w-[1200px]";
+
   if (!authChecked) {
     return <div className="min-h-screen p-10 text-sm text-gray-500">Checking access...</div>;
   }
@@ -568,9 +574,28 @@ export default function WeeklyPage() {
   return (
     <div className="min-h-screen p-6 md:p-10">
       <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-2xl font-semibold">Weekly Driver Board</h1>
+        <div>
+          <h1 className="text-2xl font-semibold">Accell - Weekly Driver Availability</h1>
+          <p className="mt-1 text-sm text-gray-500">
+            Manage driver schedules and move between weekly and availability views.
+          </p>
+        </div>
 
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
+          <button
+            onClick={() => router.push("/weekly")}
+            className="rounded bg-blue-700 px-4 py-2 text-sm font-medium text-white"
+          >
+            Weekly
+          </button>
+
+          <button
+            onClick={() => router.push("/availability")}
+            className="rounded bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700"
+          >
+            Availability
+          </button>
+
           {[1, 3, 7].map((n) => (
             <button
               key={n}
@@ -587,7 +612,8 @@ export default function WeeklyPage() {
 
           <button
             onClick={() => setIsAddDriverOpen(true)}
-            className="rounded bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700"
+            disabled={isAddingDriver}
+            className="rounded bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700 disabled:opacity-50"
           >
             Add driver
           </button>
@@ -596,7 +622,7 @@ export default function WeeklyPage() {
             onClick={() => loadData()}
             className="rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
           >
-            Refresh data
+            Refresh
           </button>
 
           <button
@@ -607,6 +633,12 @@ export default function WeeklyPage() {
           </button>
         </div>
       </div>
+
+      {currentRole === "admin" && (
+        <div className="mb-4 rounded border border-blue-200 bg-blue-50 p-3 text-sm text-blue-800">
+          Admin access enabled
+        </div>
+      )}
 
       {errorMessage && (
         <div className="mb-4 rounded border border-red-300 bg-red-50 p-3 text-sm text-red-700">
@@ -620,26 +652,20 @@ export default function WeeklyPage() {
         </div>
       )}
 
-      <div
-        className={`relative overflow-x-auto overflow-y-auto max-h-[70vh] ${
-          viewDays === 1 ? "flex justify-center" : ""
-        }`}
-      >
-        <table
-          className={`w-full table-auto border-collapse ${
-            viewDays === 1 ? "min-w-0 max-w-[calc(100vw-2rem)]" : "min-w-[1200px]"
-          }`}
-        >
+      <div className="relative max-h-[70vh] overflow-x-auto overflow-y-auto">
+        <table className={`w-full table-auto border-collapse ${tableMinWidth}`}>
           <thead>
             <tr className="border-b shadow-lg">
-              <th className="sticky top-0 z-30 bg-black/90 px-2 py-3 text-right text-lg font-bold text-gray-300">Driver</th>
+              <th className="sticky top-0 z-30 bg-black/90 px-2 py-3 text-right text-lg font-bold text-gray-300">
+                Driver
+              </th>
               {weekDays.map((day) => {
                 const isToday = day.iso === todayIso;
 
                 return (
                   <th
                     key={day.iso}
-                    className={`sticky top-0 z-20 p-2 text-center text-lg font-bold bg-black/90 text-gray-300 ${
+                    className={`sticky top-0 z-20 bg-black/90 p-2 text-center text-lg font-bold text-gray-300 ${
                       isToday ? "bg-black/95 text-white" : ""
                     }`}
                   >
@@ -655,7 +681,7 @@ export default function WeeklyPage() {
             {sortedDrivers.map((driver) => (
               <tr key={driver.id} className="border-b align-top">
                 <td className="p-2 align-top text-right">
-                  <div className="flex flex-wrap items-center gap-1 justify-end">
+                  <div className="flex flex-wrap items-center justify-end gap-1">
                     <span className="text-sm font-medium">{driver.full_name}</span>
 
                     {driver.approval_status === "pending" && (
@@ -699,7 +725,7 @@ export default function WeeklyPage() {
                     )}
                   </div>
 
-                  <div className="text-xs text-gray-500 text-right">{driver.vehicle_label}</div>
+                  <div className="text-right text-xs text-gray-500">{driver.vehicle_label}</div>
                 </td>
 
                 {weekDays.map((day) => {
@@ -729,7 +755,7 @@ export default function WeeklyPage() {
 
             {drivers.length === 0 && !errorMessage && (
               <tr>
-                <td colSpan={8} className="p-4 text-sm text-gray-500">
+                <td colSpan={viewDays + 1} className="p-4 text-sm text-gray-500">
                   No drivers found.
                 </td>
               </tr>

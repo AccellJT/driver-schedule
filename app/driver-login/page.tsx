@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
@@ -18,21 +19,21 @@ export default function DriverLoginPage() {
     setIsLoading(true);
 
     const { data, error } = await supabase.auth.signInWithPassword({
-      email,
+      email: email.trim().toLowerCase(),
       password,
     });
 
     if (error) {
-      setIsLoading(false);
       setErrorMessage(error.message);
+      setIsLoading(false);
       return;
     }
 
     const user = data.user;
 
     if (!user) {
-      setIsLoading(false);
       setErrorMessage("Login failed.");
+      setIsLoading(false);
       return;
     }
 
@@ -44,35 +45,24 @@ export default function DriverLoginPage() {
 
     if (profileError || !profile) {
       await supabase.auth.signOut();
+      setErrorMessage("Unable to load profile.");
       setIsLoading(false);
-      setErrorMessage("No driver profile found for this account.");
       return;
     }
 
-    if (profile.role !== "driver" || !profile.driver_id) {
+    const normalizedRole = String(profile.role ?? "").trim().toLowerCase();
+
+    if (normalizedRole !== "driver") {
       await supabase.auth.signOut();
-      setIsLoading(false);
       setErrorMessage("This account is not authorized for driver access.");
+      setIsLoading(false);
       return;
     }
 
-    const { data: driver, error: driverError } = await supabase
-      .from("drivers")
-      .select("approval_status")
-      .eq("id", profile.driver_id)
-      .single();
-
-    if (driverError || !driver) {
+    if (!profile.driver_id) {
       await supabase.auth.signOut();
+      setErrorMessage("No driver record is linked to this account.");
       setIsLoading(false);
-      setErrorMessage("Unable to load driver record.");
-      return;
-    }
-
-    if (driver.approval_status === "blocked") {
-      await supabase.auth.signOut();
-      setIsLoading(false);
-      setErrorMessage("This driver account has been removed from schedule.");
       return;
     }
 
@@ -83,43 +73,56 @@ export default function DriverLoginPage() {
 
   return (
     <main className="mx-auto flex min-h-screen max-w-md items-center px-6">
-      <div className="w-full rounded-xl border bg-white p-6 shadow-sm">
-        <h1 className="mb-2 text-2xl font-semibold text-black">Driver Login</h1>
-        <p className="mb-6 text-sm text-gray-500">
-          Sign in with your email and password.
+      <div className="w-full rounded-xl border border-zinc-200 bg-white p-6 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+        <h1 className="mb-2 text-2xl font-semibold text-zinc-900 dark:text-zinc-100">
+          Driver Login
+        </h1>
+        <p className="mb-6 text-sm text-zinc-600 dark:text-zinc-400">
+          Sign in with your driver account to submit or review availability.
         </p>
 
         {errorMessage && (
-          <div className="mb-4 rounded border border-red-300 bg-red-50 p-3 text-sm text-red-700">
+          <div className="mb-4 rounded border border-red-300 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
             {errorMessage}
           </div>
         )}
 
         <form onSubmit={handleLogin} className="space-y-4">
           <div>
-            <label className="mb-1 block text-sm font-medium text-black">
+            <label className="mb-1 block text-sm font-medium text-zinc-900 dark:text-zinc-100">
               Email
             </label>
             <input
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              className="w-full rounded border border-gray-300 bg-white px-3 py-2 text-gray-900"
+              className="w-full rounded border border-zinc-300 bg-white px-3 py-2 text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
               required
+              autoComplete="email"
             />
           </div>
 
           <div>
-            <label className="mb-1 block text-sm font-medium text-black">
+            <label className="mb-1 block text-sm font-medium text-zinc-900 dark:text-zinc-100">
               Password
             </label>
             <input
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className="w-full rounded border border-gray-300 bg-white px-3 py-2 text-gray-900"
+              className="w-full rounded border border-zinc-300 bg-white px-3 py-2 text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
               required
+              autoComplete="current-password"
             />
+          </div>
+
+          <div className="text-right">
+            <Link
+              href="/forgot-password"
+              className="text-sm text-blue-600 hover:underline dark:text-blue-400"
+            >
+              Forgot password?
+            </Link>
           </div>
 
           <button

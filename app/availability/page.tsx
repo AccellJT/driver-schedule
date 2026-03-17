@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 
 type DriverApprovalStatus = "pending" | "approved" | "blocked";
+type AppRole = "admin" | "dispatch" | "driver" | "ops" | "manager";
 
 type Driver = {
   id: string;
@@ -21,10 +22,47 @@ type AvailabilitySlot = {
   end_time: string;
 };
 
+type DispatchScheduleItem = {
+  id: string;
+  dispatcher_name: string;
+  dispatcher_email: string | null;
+  service_date: string;
+  start_time: string;
+  end_time: string;
+  notes: string | null;
+};
+
+type DispatcherOption = {
+  id: string;
+  name: string | null;
+  dispatch_email: string | null;
+  role: string;
+};
+
+type WeekGroup<T> = {
+  weekStartIso: string;
+  days: {
+    iso: string;
+    labelTop: string;
+    labelBottom: string;
+    items: T[];
+  }[];
+};
+
 function localDateIso(date: Date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(
     date.getDate()
   ).padStart(2, "0")}`;
+}
+
+function addDays(date: Date, daysToAdd: number) {
+  const d = new Date(date);
+  d.setDate(d.getDate() + daysToAdd);
+  return d;
+}
+
+function addDaysIso(start: Date, daysToAdd: number) {
+  return localDateIso(addDays(start, daysToAdd));
 }
 
 function parseLocalDate(value: string) {
@@ -32,14 +70,27 @@ function parseLocalDate(value: string) {
   return new Date(year, month - 1, day);
 }
 
-function formatFullDateLabel(value: string) {
-  const d = parseLocalDate(value);
-  return d.toLocaleDateString("en-US", {
-    weekday: "short",
-    month: "long",
+function startOfWeek(date: Date) {
+  const d = new Date(date);
+  const day = d.getDay();
+  d.setDate(d.getDate() - day);
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+}
+
+function formatWeekRangeLabel(weekStartIso: string) {
+  const start = parseLocalDate(weekStartIso);
+  const end = addDays(start, 6);
+
+  const startLabel = start.toLocaleDateString("en-US", {
+    month: "short",
     day: "numeric",
-    year: "numeric",
   });
+  const endLabel = end.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+  });
+
+  return `Week of ${startLabel} - ${endLabel}`;
 }
 
 function formatTime(value: string) {
@@ -62,11 +113,91 @@ function getDateRange(start: string, end: string) {
   return dates;
 }
 
+function buildWeeks<T extends { service_date: string }>(
+  items: T[],
+  weekCount: number,
+  startDate: Date
+): WeekGroup<T>[] {
+  const firstWeekStart = startOfWeek(startDate);
+
+  return Array.from({ length: weekCount }, (_, weekIndex) => {
+    const weekStart = addDays(firstWeekStart, weekIndex * 7);
+    const weekStartIso = localDateIso(weekStart);
+
+    const days = Array.from({ length: 7 }, (_, dayIndex) => {
+      const dayDate = addDays(weekStart, dayIndex);
+      const iso = localDateIso(dayDate);
+
+      return {
+        iso,
+        labelTop: dayDate.toLocaleDateString("en-US", { weekday: "short" }),
+        labelBottom: dayDate.toLocaleDateString("en-US", {
+          month: "numeric",
+          day: "numeric",
+        }),
+        items: items.filter((item) => item.service_date === iso),
+      };
+    });
+
+    return { weekStartIso, days };
+  });
+}
+
+function groupItemsIntoWeeks<T extends { service_date: string }>(items: T[]) {
+  const grouped = items.reduce<Record<string, T[]>>((acc, item) => {
+    const weekStartIso = localDateIso(startOfWeek(parseLocalDate(item.service_date)));
+    if (!acc[weekStartIso]) acc[weekStartIso] = [];
+    acc[weekStartIso].push(item);
+    return acc;
+  }, {});
+
+  return Object.entries(grouped)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([weekStartIso, weekItems]) => buildWeeks(weekItems, 1, parseLocalDate(weekStartIso))[0]);
+}
+
+function WeekViewButtons({
+  value,
+  onChange,
+}: {
+  value: 1 | 2 | "all";
+  onChange: (value: 1 | 2 | "all") => void;
+}) {
+  const options: Array<1 | 2 | "all"> = [1, 2, "all"];
+
+  return (
+    <div className="flex flex-wrap gap-2">
+      {options.map((option) => {
+        const label = option === 1 ? "1 week" : option === 2 ? "2 weeks" : "All";
+        const isActive = value === option;
+
+        return (
+          <button
+            key={String(option)}
+            type="button"
+            onClick={() => onChange(option)}
+            className={`rounded px-3 py-2 text-sm font-medium ${
+              isActive
+                ? "bg-blue-700 text-white"
+                : "bg-zinc-200 text-zinc-700 hover:bg-zinc-300 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-700"
+            }`}
+          >
+            {label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 export default function AvailabilityPage() {
   const router = useRouter();
 
   const [drivers, setDrivers] = useState<Driver[]>([]);
   const [slots, setSlots] = useState<AvailabilitySlot[]>([]);
+  const [dispatchSchedule, setDispatchSchedule] = useState<DispatchScheduleItem[]>([]);
+  const [dispatchers, setDispatchers] = useState<DispatcherOption[]>([]);
+
   const [selectedDriverId, setSelectedDriverId] = useState("");
   const [serviceDate, setServiceDate] = useState(localDateIso(new Date()));
   const [dateMode, setDateMode] = useState<"single" | "range">("single");
@@ -74,12 +205,43 @@ export default function AvailabilityPage() {
   const [rangeEndDate, setRangeEndDate] = useState(localDateIso(new Date()));
   const [startTime, setStartTime] = useState("08:00");
   const [endTime, setEndTime] = useState("10:00");
+
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [authChecked, setAuthChecked] = useState(false);
-  const [currentRole, setCurrentRole] = useState<"dispatch" | "driver" | null>(null);
+  const [currentRole, setCurrentRole] = useState<AppRole | null>(null);
   const [currentProfileDriverId, setCurrentProfileDriverId] = useState<string | null>(null);
+
+  const [dispatchScheduleView, setDispatchScheduleView] = useState<1 | 2 | "all">(2);
+  const [existingAvailabilityView, setExistingAvailabilityView] = useState<1 | 2 | "all">(2);
+  const [isAddingDispatchShift, setIsAddingDispatchShift] = useState(false);
+  const [dispatchForm, setDispatchForm] = useState({
+    dispatcher_profile_id: "",
+    date_mode: "single" as "single" | "range",
+    service_date: localDateIso(new Date()),
+    range_start_date: localDateIso(new Date()),
+    range_end_date: localDateIso(new Date()),
+    start_time: "08:00",
+    end_time: "17:00",
+    notes: "",
+  });
+
+  const [editingDispatchId, setEditingDispatchId] = useState<string | null>(null);
+  const [editingDispatchValues, setEditingDispatchValues] = useState({
+    dispatcher_profile_id: "",
+    service_date: "",
+    start_time: "",
+    end_time: "",
+    notes: "",
+  });
+  const [isSavingDispatchShift, setIsSavingDispatchShift] = useState(false);
+
+  const canManageDriverAvailability =
+    currentRole === "admin" || currentRole === "dispatch";
+  const canManageDispatchSchedule = currentRole === "admin";
+
+  const todayIso = localDateIso(new Date());
 
   useEffect(() => {
     async function checkAccess() {
@@ -113,8 +275,8 @@ export default function AvailabilityPage() {
         setCurrentRole("driver");
         setCurrentProfileDriverId(profile.driver_id);
         setSelectedDriverId(profile.driver_id);
-      } else if (profile.role === "dispatch") {
-        setCurrentRole("dispatch");
+      } else if (profile.role === "dispatch" || profile.role === "admin") {
+        setCurrentRole(profile.role as AppRole);
       } else {
         await supabase.auth.signOut();
         router.push("/driver-login");
@@ -145,7 +307,7 @@ export default function AvailabilityPage() {
       const driverRows = (data ?? []) as Driver[];
       setDrivers(driverRows);
 
-      if (currentRole === "dispatch") {
+      if (currentRole === "dispatch" || currentRole === "admin") {
         if (driverRows.length > 0) {
           setSelectedDriverId((current) => current || driverRows[0].id);
         }
@@ -158,6 +320,36 @@ export default function AvailabilityPage() {
   }, [authChecked, currentRole, currentProfileDriverId]);
 
   useEffect(() => {
+    if (!authChecked) return;
+
+    async function loadDispatchers() {
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("id, name, dispatch_email, role")
+        .in("role", ["dispatch", "admin"])
+        .order("role", { ascending: true })
+        .order("name", { ascending: true });
+
+      if (error) {
+        setErrorMessage(error.message);
+        return;
+      }
+
+      const rows = (data ?? []) as DispatcherOption[];
+      setDispatchers(rows);
+
+      if (rows.length > 0) {
+        setDispatchForm((prev) => ({
+          ...prev,
+          dispatcher_profile_id: prev.dispatcher_profile_id || rows[0].id,
+        }));
+      }
+    }
+
+    loadDispatchers();
+  }, [authChecked]);
+
+  useEffect(() => {
     if (!authChecked || !selectedDriverId) return;
 
     async function loadSlots() {
@@ -165,7 +357,7 @@ export default function AvailabilityPage() {
         .from("availability_slots")
         .select("*")
         .eq("driver_id", selectedDriverId)
-        .gte("service_date", localDateIso(new Date()))
+        .gte("service_date", todayIso)
         .order("service_date", { ascending: true })
         .order("start_time", { ascending: true });
 
@@ -178,39 +370,112 @@ export default function AvailabilityPage() {
     }
 
     loadSlots();
-  }, [authChecked, selectedDriverId]);
+  }, [authChecked, selectedDriverId, todayIso]);
+
+  useEffect(() => {
+    if (!authChecked) return;
+
+    async function loadDispatchSchedule() {
+      const endDate =
+        dispatchScheduleView === 1
+          ? addDaysIso(new Date(), 6)
+          : dispatchScheduleView === 2
+          ? addDaysIso(new Date(), 13)
+          : addDaysIso(new Date(), 365);
+
+      const { data, error } = await supabase
+        .from("dispatcher_schedule")
+        .select("*")
+        .gte("service_date", todayIso)
+        .lte("service_date", endDate)
+        .order("service_date", { ascending: true })
+        .order("start_time", { ascending: true });
+
+      if (error) {
+        setErrorMessage(error.message);
+        return;
+      }
+
+      setDispatchSchedule((data ?? []) as DispatchScheduleItem[]);
+    }
+
+    loadDispatchSchedule();
+  }, [authChecked, todayIso, dispatchScheduleView]);
 
   const selectedDriver = useMemo(
     () => drivers.find((driver) => driver.id === selectedDriverId) ?? null,
     [drivers, selectedDriverId]
   );
 
-  const groupedSlots = useMemo(() => {
-    const map: Record<string, AvailabilitySlot[]> = {};
+  const allDispatchScheduleWeeks = useMemo(
+    () => groupItemsIntoWeeks(dispatchSchedule),
+    [dispatchSchedule]
+  );
 
-    for (const slot of slots) {
-      if (!map[slot.service_date]) map[slot.service_date] = [];
-      map[slot.service_date].push(slot);
-    }
+  const visibleDispatchScheduleWeeks = useMemo(() => {
+    if (dispatchScheduleView === "all") return allDispatchScheduleWeeks;
+    return allDispatchScheduleWeeks.slice(0, dispatchScheduleView);
+  }, [allDispatchScheduleWeeks, dispatchScheduleView]);
 
-    return Object.entries(map).sort(([a], [b]) => a.localeCompare(b));
-  }, [slots]);
+  const allAvailabilityWeeks = useMemo(
+    () => groupItemsIntoWeeks(slots),
+    [slots]
+  );
 
-  async function refreshSlots(driverId: string) {
-    const { data, error } = await supabase
-      .from("availability_slots")
-      .select("*")
-      .eq("driver_id", driverId)
-      .gte("service_date", localDateIso(new Date()))
-      .order("service_date", { ascending: true })
-      .order("start_time", { ascending: true });
+  const visibleAvailabilityWeeks = useMemo(() => {
+    if (existingAvailabilityView === "all") return allAvailabilityWeeks;
+    return allAvailabilityWeeks.slice(0, existingAvailabilityView);
+  }, [allAvailabilityWeeks, existingAvailabilityView]);
 
-    if (error) {
-      setErrorMessage(error.message);
+  function getDispatcherOption(profileId: string) {
+    return dispatchers.find((d) => d.id === profileId) ?? null;
+  }
+
+  function getDispatcherDisplayName(option: DispatcherOption | null) {
+    if (!option) return "Unknown";
+    return option.name?.trim() || option.dispatch_email || "Unknown";
+  }
+
+  async function refreshAllData(driverId: string) {
+    const dispatchEndDate =
+      dispatchScheduleView === 1
+        ? addDaysIso(new Date(), 6)
+        : dispatchScheduleView === 2
+        ? addDaysIso(new Date(), 13)
+        : addDaysIso(new Date(), 365);
+
+    const [
+      { data: slotData, error: slotError },
+      { data: dispatchData, error: dispatchError },
+    ] = await Promise.all([
+      supabase
+        .from("availability_slots")
+        .select("*")
+        .eq("driver_id", driverId)
+        .gte("service_date", todayIso)
+        .order("service_date", { ascending: true })
+        .order("start_time", { ascending: true }),
+      supabase
+        .from("dispatcher_schedule")
+        .select("*")
+        .gte("service_date", todayIso)
+        .lte("service_date", dispatchEndDate)
+        .order("service_date", { ascending: true })
+        .order("start_time", { ascending: true }),
+    ]);
+
+    if (slotError) {
+      setErrorMessage(slotError.message);
       return;
     }
 
-    setSlots((data ?? []) as AvailabilitySlot[]);
+    if (dispatchError) {
+      setErrorMessage(dispatchError.message);
+      return;
+    }
+
+    setSlots((slotData ?? []) as AvailabilitySlot[]);
+    setDispatchSchedule((dispatchData ?? []) as DispatchScheduleItem[]);
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -243,9 +508,7 @@ export default function AvailabilityPage() {
     }
 
     const selectedDates =
-      dateMode === "single"
-        ? [serviceDate]
-        : getDateRange(rangeStartDate, rangeEndDate);
+      dateMode === "single" ? [serviceDate] : getDateRange(rangeStartDate, rangeEndDate);
 
     setIsSaving(true);
 
@@ -270,17 +533,14 @@ export default function AvailabilityPage() {
         selectedDates.length === 1 ? "" : "s"
       }.`
     );
-    await refreshSlots(selectedDriverId);
+    await refreshAllData(selectedDriverId);
   }
 
   async function handleDelete(slotId: string) {
     setErrorMessage(null);
     setSuccessMessage(null);
 
-    const { error } = await supabase
-      .from("availability_slots")
-      .delete()
-      .eq("id", slotId);
+    const { error } = await supabase.from("availability_slots").delete().eq("id", slotId);
 
     if (error) {
       setErrorMessage(error.message);
@@ -288,45 +548,625 @@ export default function AvailabilityPage() {
     }
 
     setSuccessMessage("Availability removed.");
-    await refreshSlots(selectedDriverId);
+    await refreshAllData(selectedDriverId);
+  }
+
+  async function handleAddDispatchShift(e: React.FormEvent) {
+    e.preventDefault();
+    setErrorMessage(null);
+    setSuccessMessage(null);
+
+    const selectedDispatcher = getDispatcherOption(dispatchForm.dispatcher_profile_id);
+
+    if (!selectedDispatcher) {
+      setErrorMessage("Please select a dispatcher.");
+      return;
+    }
+
+    if (dispatchForm.end_time <= dispatchForm.start_time) {
+      setErrorMessage("Dispatch shift end time must be later than start time.");
+      return;
+    }
+
+    if (
+      dispatchForm.date_mode === "range" &&
+      dispatchForm.range_end_date < dispatchForm.range_start_date
+    ) {
+      setErrorMessage("End date must be the same as or after start date.");
+      return;
+    }
+
+    const selectedDates =
+      dispatchForm.date_mode === "single"
+        ? [dispatchForm.service_date]
+        : getDateRange(dispatchForm.range_start_date, dispatchForm.range_end_date);
+
+    setIsSavingDispatchShift(true);
+
+    const { error } = await supabase.from("dispatcher_schedule").insert(
+      selectedDates.map((date) => ({
+        dispatcher_name: getDispatcherDisplayName(selectedDispatcher),
+        dispatcher_email: selectedDispatcher.dispatch_email ?? null,
+        service_date: date,
+        start_time: dispatchForm.start_time,
+        end_time: dispatchForm.end_time,
+        notes: dispatchForm.notes.trim() || null,
+      }))
+    );
+
+    setIsSavingDispatchShift(false);
+
+    if (error) {
+      setErrorMessage(error.message);
+      return;
+    }
+
+    setDispatchForm({
+      dispatcher_profile_id: dispatchers[0]?.id ?? "",
+      date_mode: "single",
+      service_date: localDateIso(new Date()),
+      range_start_date: localDateIso(new Date()),
+      range_end_date: localDateIso(new Date()),
+      start_time: "08:00",
+      end_time: "17:00",
+      notes: "",
+    });
+    setIsAddingDispatchShift(false);
+    setSuccessMessage(
+      `Dispatch shift saved for ${selectedDates.length} date${
+        selectedDates.length === 1 ? "" : "s"
+      }.`
+    );
+    await refreshAllData(selectedDriverId);
+  }
+
+  function beginEditDispatchShift(item: DispatchScheduleItem) {
+    const matchingDispatcher =
+      dispatchers.find((d) => (d.dispatch_email ?? "") === (item.dispatcher_email ?? "")) ?? null;
+
+    setEditingDispatchId(item.id);
+    setEditingDispatchValues({
+      dispatcher_profile_id: matchingDispatcher?.id ?? "",
+      service_date: item.service_date,
+      start_time: item.start_time,
+      end_time: item.end_time,
+      notes: item.notes ?? "",
+    });
+    setErrorMessage(null);
+    setSuccessMessage(null);
+  }
+
+  function cancelEditDispatchShift() {
+    setEditingDispatchId(null);
+    setEditingDispatchValues({
+      dispatcher_profile_id: "",
+      service_date: "",
+      start_time: "",
+      end_time: "",
+      notes: "",
+    });
+  }
+
+  async function handleUpdateDispatchShift(shiftId: string) {
+    setErrorMessage(null);
+    setSuccessMessage(null);
+
+    const selectedDispatcher = getDispatcherOption(editingDispatchValues.dispatcher_profile_id);
+
+    if (!selectedDispatcher) {
+      setErrorMessage("Please select a dispatcher.");
+      return;
+    }
+
+    if (editingDispatchValues.end_time <= editingDispatchValues.start_time) {
+      setErrorMessage("Dispatch shift end time must be later than start time.");
+      return;
+    }
+
+    setIsSavingDispatchShift(true);
+
+    const { error } = await supabase
+      .from("dispatcher_schedule")
+      .update({
+        dispatcher_name: getDispatcherDisplayName(selectedDispatcher),
+        dispatcher_email: selectedDispatcher.dispatch_email ?? null,
+        service_date: editingDispatchValues.service_date,
+        start_time: editingDispatchValues.start_time,
+        end_time: editingDispatchValues.end_time,
+        notes: editingDispatchValues.notes.trim() || null,
+      })
+      .eq("id", shiftId);
+
+    setIsSavingDispatchShift(false);
+
+    if (error) {
+      setErrorMessage(error.message);
+      return;
+    }
+
+    cancelEditDispatchShift();
+    setSuccessMessage("Dispatch shift updated.");
+    await refreshAllData(selectedDriverId);
+  }
+
+  async function handleDeleteDispatchShift(shiftId: string) {
+    setErrorMessage(null);
+    setSuccessMessage(null);
+
+    const { error } = await supabase
+      .from("dispatcher_schedule")
+      .delete()
+      .eq("id", shiftId);
+
+    if (error) {
+      setErrorMessage(error.message);
+      return;
+    }
+
+    setSuccessMessage("Dispatch shift removed.");
+    await refreshAllData(selectedDriverId);
   }
 
   if (!authChecked) {
-    return <div className="p-6 text-sm text-gray-500 sm:p-10">Checking access...</div>;
+    return (
+      <div className="p-6 text-sm text-zinc-600 dark:text-zinc-300 sm:p-10">
+        Checking access...
+      </div>
+    );
   }
 
   return (
-    <main className="mx-auto max-w-6xl p-4 sm:p-6 lg:p-8">
-      <h1 className="mb-2 text-xl font-semibold sm:text-2xl">Availability Submission</h1>
-      <p className="mb-6 text-sm text-gray-500">
-        Drivers can submit one or more availability windows per day. Dispatch
-        can use this same page for quick updates.
+    <main className="mx-auto max-w-7xl p-4 text-zinc-900 dark:text-zinc-100 sm:p-6 lg:p-8">
+      <h1 className="mb-2 text-xl font-semibold sm:text-2xl">
+        Accell Contractor Availability Submission
+      </h1>
+      <p className="mb-6 text-sm text-zinc-600 dark:text-zinc-300">
+        Drivers can submit one or more availability windows per day. Dispatch can use this same
+        page for quick updates.
       </p>
 
+      <div className="mb-6 flex flex-wrap gap-2">
+        {(currentRole === "admin" || currentRole === "dispatch") && (
+        <button
+          type="button"
+          onClick={() => router.push("/weekly")}
+          className="rounded bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700"
+        >
+          Dispatcher Page
+        </button>
+      )}
+        <button
+          type="button"
+          onClick={() => router.push("/availability")}
+          className="rounded bg-blue-700 px-4 py-2 text-sm font-medium text-white"
+        >
+          Availability
+        </button>
+      </div>
+
       {errorMessage && (
-        <div className="mb-4 rounded border border-red-300 bg-red-50 p-3 text-sm text-red-700">
+        <div className="mb-4 rounded border border-red-300 bg-red-50 p-3 text-sm text-red-700 dark:border-red-800 dark:bg-red-950 dark:text-red-200">
           {errorMessage}
         </div>
       )}
 
       {successMessage && (
-        <div className="mb-4 rounded border border-green-300 bg-green-50 p-3 text-sm text-green-700">
+        <div className="mb-4 rounded border border-green-300 bg-green-50 p-3 text-sm text-green-700 dark:border-green-800 dark:bg-green-950 dark:text-green-200">
           {successMessage}
         </div>
       )}
 
-      <div className="grid gap-6 lg:grid-cols-[380px,1fr]">
-        <section className="rounded-xl border p-4 shadow-sm sm:p-5">
-          <h2 className="mb-4 text-lg font-medium">Add Availability</h2>
+      <section className="mb-6 rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900 sm:p-5">
+        <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h2 className="text-lg font-medium">Dispatch Schedule</h2>
+            <p className="text-sm text-zinc-600 dark:text-zinc-300">
+              {dispatchScheduleView === 1
+                ? "Showing current week first"
+                : dispatchScheduleView === 2
+                ? "Showing current and next week"
+                : "Showing all future weeks starting with the current week"}
+            </p>
+          </div>
+
+          <div className="flex flex-wrap gap-2">
+            <WeekViewButtons value={dispatchScheduleView} onChange={setDispatchScheduleView} />
+            {canManageDispatchSchedule && (
+              <button
+                type="button"
+                onClick={() => {
+                  setIsAddingDispatchShift((prev) => !prev);
+                  cancelEditDispatchShift();
+                }}
+                className="rounded bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700"
+              >
+                {isAddingDispatchShift ? "Close" : "Add Shift"}
+              </button>
+            )}
+          </div>
+        </div>
+
+        {canManageDispatchSchedule && isAddingDispatchShift && (
+          <form
+            onSubmit={handleAddDispatchShift}
+            className="mb-4 rounded-lg border border-blue-300 bg-blue-50 p-4 shadow-sm dark:border-blue-900 dark:bg-blue-950/60"
+          >
+            <div className="mb-3 text-sm font-semibold text-blue-900 dark:text-blue-100">
+              Add Dispatch Shift
+            </div>
+
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              <div>
+                <label className="mb-1 block text-sm font-medium">Dispatcher</label>
+                <select
+                  value={dispatchForm.dispatcher_profile_id}
+                  onChange={(e) =>
+                    setDispatchForm((prev) => ({
+                      ...prev,
+                      dispatcher_profile_id: e.target.value,
+                    }))
+                  }
+                  className="w-full rounded border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+                >
+                  {dispatchers.map((dispatcher) => (
+                    <option key={dispatcher.id} value={dispatcher.id}>
+                      {getDispatcherDisplayName(dispatcher)}
+                      {dispatcher.role === "admin" ? " (Admin)" : ""}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="mb-1 block text-sm font-medium">Date mode</label>
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-4">
+                  <label className="flex items-center gap-2 text-sm">
+                    <input
+                      type="radio"
+                      name="dispatchDateMode"
+                      value="single"
+                      checked={dispatchForm.date_mode === "single"}
+                      onChange={() =>
+                        setDispatchForm((prev) => ({
+                          ...prev,
+                          date_mode: "single",
+                        }))
+                      }
+                      className="h-4 w-4"
+                    />
+                    Single date
+                  </label>
+                  <label className="flex items-center gap-2 text-sm">
+                    <input
+                      type="radio"
+                      name="dispatchDateMode"
+                      value="range"
+                      checked={dispatchForm.date_mode === "range"}
+                      onChange={() =>
+                        setDispatchForm((prev) => ({
+                          ...prev,
+                          date_mode: "range",
+                        }))
+                      }
+                      className="h-4 w-4"
+                    />
+                    Date range
+                  </label>
+                </div>
+              </div>
+
+              <div>
+                <label className="mb-1 block text-sm font-medium">Notes</label>
+                <input
+                  type="text"
+                  value={dispatchForm.notes}
+                  onChange={(e) =>
+                    setDispatchForm((prev) => ({ ...prev, notes: e.target.value }))
+                  }
+                  className="w-full rounded border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+                />
+              </div>
+
+              {dispatchForm.date_mode === "single" ? (
+                <div>
+                  <label className="mb-1 block text-sm font-medium">Date</label>
+                  <input
+                    type="date"
+                    value={dispatchForm.service_date}
+                    onChange={(e) =>
+                      setDispatchForm((prev) => ({ ...prev, service_date: e.target.value }))
+                    }
+                    className="w-full rounded border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+                  />
+                </div>
+              ) : (
+                <>
+                  <div>
+                    <label className="mb-1 block text-sm font-medium">Start date</label>
+                    <input
+                      type="date"
+                      value={dispatchForm.range_start_date}
+                      onChange={(e) =>
+                        setDispatchForm((prev) => ({
+                          ...prev,
+                          range_start_date: e.target.value,
+                        }))
+                      }
+                      className="w-full rounded border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="mb-1 block text-sm font-medium">End date</label>
+                    <input
+                      type="date"
+                      value={dispatchForm.range_end_date}
+                      onChange={(e) =>
+                        setDispatchForm((prev) => ({
+                          ...prev,
+                          range_end_date: e.target.value,
+                        }))
+                      }
+                      className="w-full rounded border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+                    />
+                  </div>
+                </>
+              )}
+
+              <div>
+                <label className="mb-1 block text-sm font-medium">Start time</label>
+                <input
+                  type="time"
+                  value={dispatchForm.start_time}
+                  onChange={(e) =>
+                    setDispatchForm((prev) => ({ ...prev, start_time: e.target.value }))
+                  }
+                  className="w-full rounded border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+                />
+              </div>
+
+              <div>
+                <label className="mb-1 block text-sm font-medium">End time</label>
+                <input
+                  type="time"
+                  value={dispatchForm.end_time}
+                  onChange={(e) =>
+                    setDispatchForm((prev) => ({ ...prev, end_time: e.target.value }))
+                  }
+                  className="w-full rounded border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+                />
+              </div>
+            </div>
+
+            <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+              <button
+                type="submit"
+                disabled={isSavingDispatchShift}
+                className="rounded bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+              >
+                {isSavingDispatchShift ? "Saving..." : "Save Shift"}
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsAddingDispatchShift(false)}
+                className="rounded border border-zinc-300 px-3 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
+              >
+                Cancel
+              </button>
+            </div>
+          </form>
+        )}
+
+        <div className="space-y-4">
+          {visibleDispatchScheduleWeeks.map((week) => (
+            <div
+              key={week.weekStartIso}
+              className="rounded-lg border border-zinc-200 bg-zinc-50 p-3 dark:border-zinc-800 dark:bg-zinc-950"
+            >
+              <div className="mb-3 text-sm font-semibold text-zinc-800 dark:text-zinc-200">
+                {formatWeekRangeLabel(week.weekStartIso)}
+              </div>
+
+              <div className="overflow-x-auto">
+                <div className="grid min-w-[1120px] grid-cols-7 gap-3">
+                  {week.days.map((day) => {
+                    const isToday = day.iso === todayIso;
+
+                    return (
+                      <div
+                        key={day.iso}
+                        className={`rounded border p-2 ${
+                          isToday
+                            ? "border-blue-300 bg-blue-50 dark:border-blue-900 dark:bg-blue-950/40"
+                            : "border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900"
+                        }`}
+                      >
+                        <div
+                          className={`mb-2 border-b pb-2 text-center ${
+                            isToday
+                              ? "border-blue-200 dark:border-blue-900"
+                              : "border-zinc-200 dark:border-zinc-800"
+                          }`}
+                        >
+                          <div className="text-xs font-semibold">{day.labelTop}</div>
+                          <div className="text-xs text-zinc-500 dark:text-zinc-400">
+                            {day.labelBottom}
+                          </div>
+                        </div>
+
+                        <div className="space-y-2">
+                          {day.items.length === 0 ? (
+                            <div className="rounded border border-dashed border-zinc-300 p-2 text-center text-xs text-zinc-400 dark:border-zinc-700">
+                              —
+                            </div>
+                          ) : (
+                            day.items.map((item) =>
+                              editingDispatchId === item.id ? (
+                                <div
+                                  key={item.id}
+                                  className="rounded border border-blue-200 bg-blue-50 p-2 dark:border-blue-900 dark:bg-blue-950"
+                                >
+                                  <div className="space-y-2">
+                                    <select
+                                      value={editingDispatchValues.dispatcher_profile_id}
+                                      onChange={(e) =>
+                                        setEditingDispatchValues((prev) => ({
+                                          ...prev,
+                                          dispatcher_profile_id: e.target.value,
+                                        }))
+                                      }
+                                      className="w-full rounded border border-zinc-300 bg-white px-2 py-1 text-xs text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+                                    >
+                                      {dispatchers.map((dispatcher) => (
+                                        <option key={dispatcher.id} value={dispatcher.id}>
+                                          {getDispatcherDisplayName(dispatcher)}
+                                          {dispatcher.role === "admin" ? " (Admin)" : ""}
+                                        </option>
+                                      ))}
+                                    </select>
+
+                                    <input
+                                      type="date"
+                                      value={editingDispatchValues.service_date}
+                                      onChange={(e) =>
+                                        setEditingDispatchValues((prev) => ({
+                                          ...prev,
+                                          service_date: e.target.value,
+                                        }))
+                                      }
+                                      className="w-full rounded border border-zinc-300 bg-white px-2 py-1 text-xs text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+                                    />
+
+                                    <div className="grid grid-cols-2 gap-2">
+                                      <input
+                                        type="time"
+                                        value={editingDispatchValues.start_time}
+                                        onChange={(e) =>
+                                          setEditingDispatchValues((prev) => ({
+                                            ...prev,
+                                            start_time: e.target.value,
+                                          }))
+                                        }
+                                        className="w-full rounded border border-zinc-300 bg-white px-2 py-1 text-xs text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+                                      />
+                                      <input
+                                        type="time"
+                                        value={editingDispatchValues.end_time}
+                                        onChange={(e) =>
+                                          setEditingDispatchValues((prev) => ({
+                                            ...prev,
+                                            end_time: e.target.value,
+                                          }))
+                                        }
+                                        className="w-full rounded border border-zinc-300 bg-white px-2 py-1 text-xs text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+                                      />
+                                    </div>
+
+                                    <input
+                                      type="text"
+                                      value={editingDispatchValues.notes}
+                                      onChange={(e) =>
+                                        setEditingDispatchValues((prev) => ({
+                                          ...prev,
+                                          notes: e.target.value,
+                                        }))
+                                      }
+                                      className="w-full rounded border border-zinc-300 bg-white px-2 py-1 text-xs text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+                                      placeholder="Notes"
+                                    />
+
+                                    <div className="flex gap-1">
+                                      <button
+                                        type="button"
+                                        onClick={() => handleUpdateDispatchShift(item.id)}
+                                        disabled={isSavingDispatchShift}
+                                        className="rounded bg-blue-600 px-2 py-1 text-[11px] font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+                                        title="Save"
+                                      >
+                                        S
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={cancelEditDispatchShift}
+                                        className="rounded border border-zinc-300 px-2 py-1 text-[11px] font-medium text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
+                                        title="Cancel"
+                                      >
+                                        C
+                                      </button>
+                                    </div>
+                                  </div>
+                                </div>
+                              ) : (
+                                <div
+                                  key={item.id}
+                                  className="rounded border border-zinc-200 bg-zinc-50 p-2 text-xs dark:border-zinc-800 dark:bg-zinc-950"
+                                >
+                                  <div className="font-medium">
+                                    {formatTime(item.start_time)} - {formatTime(item.end_time)}
+                                  </div>
+                                  <div className="truncate text-zinc-700 dark:text-zinc-300">
+                                    {item.dispatcher_name}
+                                  </div>
+                                  {item.notes && (
+                                    <div className="truncate text-zinc-500 dark:text-zinc-400">
+                                      {item.notes}
+                                    </div>
+                                  )}
+
+                                  {canManageDispatchSchedule && (
+                                    <div className="mt-2 flex gap-1">
+                                      <button
+                                        type="button"
+                                        onClick={() => beginEditDispatchShift(item)}
+                                        className="rounded bg-blue-600 px-2 py-1 text-[11px] font-medium text-white hover:bg-blue-700"
+                                        title="Edit"
+                                      >
+                                        E
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleDeleteDispatchShift(item.id)}
+                                        className="rounded border border-red-300 bg-red-50 px-2 py-1 text-[11px] font-medium text-red-700 hover:bg-red-100 dark:border-red-900 dark:bg-red-950 dark:text-red-200 dark:hover:bg-red-900"
+                                        title="Delete"
+                                      >
+                                        D
+                                      </button>
+                                    </div>
+                                  )}
+                                </div>
+                              )
+                            )
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <div className="grid gap-6 lg:grid-cols-[420px,1fr]">
+        <section className="rounded-xl border border-blue-300 bg-blue-50 p-4 shadow-md dark:border-blue-900 dark:bg-blue-950/40 sm:p-5">
+          <div className="mb-4">
+            <h2 className="text-lg font-semibold text-blue-900 dark:text-blue-100">
+              Add Driver Availability
+            </h2>
+            <p className="text-sm text-blue-800 dark:text-blue-200">
+              Primary action area for driver schedule entry.
+            </p>
+          </div>
 
           <form className="space-y-4" onSubmit={handleSubmit}>
-            {currentRole === "dispatch" && (
+            {canManageDriverAvailability && (
               <div>
                 <label className="mb-1 block text-sm font-medium">Driver</label>
                 <select
                   value={selectedDriverId}
                   onChange={(e) => setSelectedDriverId(e.target.value)}
-                  className="w-full rounded border border-gray-300 bg-white px-3 py-2 text-gray-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                  className="w-full rounded border border-zinc-300 bg-white px-3 py-2 text-zinc-900 shadow-sm dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
                 >
                   {drivers.map((driver) => (
                     <option key={driver.id} value={driver.id}>
@@ -339,9 +1179,9 @@ export default function AvailabilityPage() {
             )}
 
             {currentRole === "driver" && selectedDriver && (
-              <div className="rounded border border-gray-200 bg-white p-3 text-sm">
-                <div className="font-medium text-gray-900">{selectedDriver.full_name}</div>
-                <div className="text-gray-500">
+              <div className="rounded border border-blue-200 bg-white p-3 text-sm dark:border-blue-900 dark:bg-zinc-900">
+                <div className="font-medium">{selectedDriver.full_name}</div>
+                <div className="text-zinc-600 dark:text-zinc-400">
                   {selectedDriver.vehicle_label ? selectedDriver.vehicle_label : "No vehicle"}
                 </div>
               </div>
@@ -382,7 +1222,7 @@ export default function AvailabilityPage() {
                   type="date"
                   value={serviceDate}
                   onChange={(e) => setServiceDate(e.target.value)}
-                  className="w-full rounded border border-gray-300 bg-white px-3 py-2 text-gray-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                  className="w-full rounded border border-zinc-300 bg-white px-3 py-2 text-zinc-900 shadow-sm dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
                 />
               </div>
             ) : (
@@ -393,7 +1233,7 @@ export default function AvailabilityPage() {
                     type="date"
                     value={rangeStartDate}
                     onChange={(e) => setRangeStartDate(e.target.value)}
-                    className="w-full rounded border border-gray-300 bg-white px-3 py-2 text-gray-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                    className="w-full rounded border border-zinc-300 bg-white px-3 py-2 text-zinc-900 shadow-sm dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
                   />
                 </div>
 
@@ -403,7 +1243,7 @@ export default function AvailabilityPage() {
                     type="date"
                     value={rangeEndDate}
                     onChange={(e) => setRangeEndDate(e.target.value)}
-                    className="w-full rounded border border-gray-300 bg-white px-3 py-2 text-gray-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                    className="w-full rounded border border-zinc-300 bg-white px-3 py-2 text-zinc-900 shadow-sm dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
                   />
                 </div>
               </div>
@@ -416,7 +1256,7 @@ export default function AvailabilityPage() {
                   type="time"
                   value={startTime}
                   onChange={(e) => setStartTime(e.target.value)}
-                  className="w-full rounded border border-gray-300 bg-white px-3 py-2 text-gray-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                  className="w-full rounded border border-zinc-300 bg-white px-3 py-2 text-zinc-900 shadow-sm dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
                 />
               </div>
 
@@ -426,7 +1266,7 @@ export default function AvailabilityPage() {
                   type="time"
                   value={endTime}
                   onChange={(e) => setEndTime(e.target.value)}
-                  className="w-full rounded border border-gray-300 bg-white px-3 py-2 text-gray-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                  className="w-full rounded border border-zinc-300 bg-white px-3 py-2 text-zinc-900 shadow-sm dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
                 />
               </div>
             </div>
@@ -441,54 +1281,107 @@ export default function AvailabilityPage() {
           </form>
         </section>
 
-        <section className="rounded-xl border p-4 shadow-sm sm:p-5">
-          <div className="mb-4">
-            <h2 className="text-lg font-medium">Existing Availability</h2>
+        <section className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900 sm:p-5">
+          <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h2 className="text-lg font-medium">Existing Availability</h2>
             {selectedDriver && (
-              <p className="text-sm text-gray-500">
-                {selectedDriver.full_name}
-                {selectedDriver.vehicle_label
-                  ? ` — ${selectedDriver.vehicle_label}`
-                  : ""}
-              </p>
-            )}
+                <p className="text-sm text-zinc-600 dark:text-zinc-400">
+                  {selectedDriver.full_name}
+                  {selectedDriver.vehicle_label ? ` — ${selectedDriver.vehicle_label}` : ""}
+                </p>
+              )}
+            </div>
+
+            <WeekViewButtons
+              value={existingAvailabilityView}
+              onChange={setExistingAvailabilityView}
+            />
           </div>
 
-          {groupedSlots.length === 0 ? (
-            <div className="rounded border border-dashed p-4 text-sm text-gray-500">
+          <p className="mb-4 text-sm text-zinc-600 dark:text-zinc-300">
+            {existingAvailabilityView === 1
+              ? "Showing the current week first"
+              : existingAvailabilityView === 2
+              ? "Showing the current two weeks first"
+              : "Showing all future availability weeks starting with the current week"}
+          </p>
+
+          {slots.length === 0 ? (
+            <div className="rounded border border-dashed border-zinc-300 p-4 text-sm text-zinc-600 dark:border-zinc-700 dark:text-zinc-300">
               No current or future availability slots found.
             </div>
           ) : (
             <div className="space-y-4">
-              {groupedSlots.map(([date, daySlots]) => (
+              {visibleAvailabilityWeeks.map((week) => (
                 <div
-                  key={date}
-                  className="rounded-lg border border-gray-200 bg-white p-3 sm:p-4"
+                  key={week.weekStartIso}
+                  className="rounded-lg border border-zinc-200 bg-zinc-50 p-3 dark:border-zinc-800 dark:bg-zinc-950"
                 >
-                  <div className="mb-3 border-b border-gray-100 pb-2">
-                    <div className="text-sm font-semibold text-gray-900">
-                      {formatFullDateLabel(date)}
-                    </div>
+                  <div className="mb-3 text-sm font-semibold text-zinc-800 dark:text-zinc-200">
+                    {formatWeekRangeLabel(week.weekStartIso)}
                   </div>
 
-                  <div className="space-y-2">
-                    {daySlots.map((slot) => (
-                      <div
-                        key={slot.id}
-                        className="flex flex-col gap-2 rounded border border-gray-200 bg-gray-50 p-3 sm:flex-row sm:items-center sm:justify-between"
-                      >
-                        <div className="text-sm font-medium text-gray-700">
-                          {formatTime(slot.start_time)} - {formatTime(slot.end_time)}
-                        </div>
+                  <div className="overflow-x-auto">
+                    <div className="grid min-w-[1120px] grid-cols-7 gap-3">
+                      {week.days.map((day) => {
+                        const isToday = day.iso === todayIso;
 
-                        <button
-                          onClick={() => handleDelete(slot.id)}
-                          className="w-full rounded border border-red-300 bg-red-50 px-2 py-2 text-xs font-medium text-red-700 hover:bg-red-100 sm:w-auto"
-                        >
-                          Delete
-                        </button>
-                      </div>
-                    ))}
+                        return (
+                          <div
+                            key={day.iso}
+                            className={`rounded border p-2 ${
+                              isToday
+                                ? "border-blue-300 bg-blue-50 dark:border-blue-900 dark:bg-blue-950/40"
+                                : "border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900"
+                            }`}
+                          >
+                            <div
+                              className={`mb-2 border-b pb-2 text-center ${
+                                isToday
+                                  ? "border-blue-200 dark:border-blue-900"
+                                  : "border-zinc-200 dark:border-zinc-800"
+                              }`}
+                            >
+                              <div className="text-xs font-semibold">{day.labelTop}</div>
+                              <div className="text-xs text-zinc-500 dark:text-zinc-400">
+                                {day.labelBottom}
+                              </div>
+                            </div>
+
+                            <div className="space-y-2">
+                              {day.items.length === 0 ? (
+                                <div className="rounded border border-dashed border-zinc-300 p-2 text-center text-xs text-zinc-400 dark:border-zinc-700">
+                                  —
+                                </div>
+                              ) : (
+                                day.items.map((slot) => (
+                                  <div
+                                    key={slot.id}
+                                    className="rounded border border-zinc-200 bg-zinc-50 p-2 text-xs dark:border-zinc-800 dark:bg-zinc-950"
+                                  >
+                                    <div className="font-medium">
+                                      {formatTime(slot.start_time)} - {formatTime(slot.end_time)}
+                                    </div>
+
+                                    <div className="mt-2 flex gap-1">
+                                      <button
+                                        type="button"
+                                        onClick={() => handleDelete(slot.id)}
+                                        className="rounded border border-red-300 bg-red-50 px-2 py-1 text-[11px] font-medium text-red-700 hover:bg-red-100 dark:border-red-900 dark:bg-red-950 dark:text-red-200 dark:hover:bg-red-900"
+                                        title="Delete"
+                                      >
+                                        D
+                                      </button>
+                                    </div>
+                                  </div>
+                                ))
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
                   </div>
                 </div>
               ))}
