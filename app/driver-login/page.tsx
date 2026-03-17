@@ -118,7 +118,7 @@ export default function DriverLoginPage() {
 
           <div className="text-right">
             <Link
-              href="/forgot-password"
+              href="/forgot-password?next=/driver-login"
               className="text-sm text-blue-600 hover:underline dark:text-blue-400"
             >
               Forgot password?

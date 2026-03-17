@@ -1,12 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 
 export default function ResetPasswordPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const nextPath = searchParams.get("next") || "/login";
 
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -61,10 +63,10 @@ export default function ResetPasswordPage() {
       return;
     }
 
-    setMessage("Password updated successfully. Redirecting to login...");
+    setMessage("Password updated successfully. Redirecting...");
 
     setTimeout(() => {
-      router.push("/login");
+      router.push(nextPath);
       router.refresh();
     }, 1500);
   }
@@ -137,7 +139,7 @@ export default function ResetPasswordPage() {
 
         <div className="mt-4 text-center">
           <Link
-            href="/login"
+            href={nextPath}
             className="text-sm text-blue-600 hover:underline dark:text-blue-400"
           >
             Back to login

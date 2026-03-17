@@ -1,10 +1,14 @@
 "use client";
 
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { useState } from "react";
 import { supabase } from "@/lib/supabase";
 
 export default function ForgotPasswordPage() {
+  const searchParams = useSearchParams();
+  const nextPath = searchParams.get("next") || "/login";
+
   const [email, setEmail] = useState("");
   const [message, setMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -19,7 +23,7 @@ export default function ForgotPasswordPage() {
     const { error } = await supabase.auth.resetPasswordForEmail(
       email.trim().toLowerCase(),
       {
-        redirectTo: `${window.location.origin}/reset-password`,
+        redirectTo: `${window.location.origin}/reset-password?next=${encodeURIComponent(nextPath)}`,
       }
     );
 
@@ -81,7 +85,7 @@ export default function ForgotPasswordPage() {
 
         <div className="mt-4 text-center">
           <Link
-            href="/login"
+            href={nextPath}
             className="text-sm text-blue-600 hover:underline dark:text-blue-400"
           >
             Back to login
