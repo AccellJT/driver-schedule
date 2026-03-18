@@ -968,7 +968,7 @@ export default function AvailabilityPage() {
               </div>
 
               <div className="overflow-x-auto">
-                <div className="grid min-w-[1120px] grid-cols-7 gap-3">
+                <div className="grid min-w-[900px] sm:min-w-[1120px] grid-cols-7 gap-3">
                   {week.days.map((day) => {
                     const isToday = day.iso === todayIso;
 
@@ -1148,7 +1148,7 @@ export default function AvailabilityPage() {
         </div>
       </section>
 
-      <div className="grid gap-6 lg:grid-cols-[420px,1fr]">
+      <div className="flex flex-col gap-6 lg:grid lg:grid-cols-[420px,1fr]">
         <section className="rounded-xl border border-blue-300 bg-blue-50 p-4 shadow-md dark:border-blue-900 dark:bg-blue-950/40 sm:p-5">
           <div className="mb-4">
             <h2 className="text-lg font-semibold text-blue-900 dark:text-blue-100">
@@ -1281,7 +1281,7 @@ export default function AvailabilityPage() {
           </form>
         </section>
 
-        <section className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900 sm:p-5">
+        <section className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900 sm:p-5 w-full overflow-hidden">
           <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <h2 className="text-lg font-medium">Existing Availability</h2>
@@ -1322,8 +1322,8 @@ export default function AvailabilityPage() {
                     {formatWeekRangeLabel(week.weekStartIso)}
                   </div>
 
-                  <div className="overflow-x-auto">
-                    <div className="grid min-w-[1120px] grid-cols-7 gap-3">
+                  <div className="overflow-x-auto pb-2">
+                    <div className="grid min-w-[900px] sm:min-w-[1120px] grid-cols-7 gap-3">
                       {week.days.map((day) => {
                         const isToday = day.iso === todayIso;
 
