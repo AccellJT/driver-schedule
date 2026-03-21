@@ -240,12 +240,19 @@ export default function AvailabilityPage() {
     notes: "",
   });
   const [isSavingDispatchShift, setIsSavingDispatchShift] = useState(false);
+  const [copyAvailabilityFromWeekStart, setCopyAvailabilityFromWeekStart] = useState("");
+  const [copyAvailabilityToWeekStart, setCopyAvailabilityToWeekStart] = useState("");
+  const [isCopyingAvailabilityWeek, setIsCopyingAvailabilityWeek] = useState(false);
+  const [copyFromWeekStart, setCopyFromWeekStart] = useState("");
+  const [copyToWeekStart, setCopyToWeekStart] = useState("");
+  const [isCopyingDispatchWeek, setIsCopyingDispatchWeek] = useState(false);
 
   const canManageDriverAvailability =
     currentRole === "admin" || currentRole === "dispatch";
   const canManageDispatchSchedule = currentRole === "admin";
 
   const todayIso = localDateIso(new Date());
+  const todayWeekStartIso = localDateIso(startOfWeek(new Date()));
 
   useEffect(() => {
     async function checkAccess() {
@@ -422,10 +429,72 @@ export default function AvailabilityPage() {
     return allDispatchScheduleWeeks.slice(0, dispatchScheduleView);
   }, [allDispatchScheduleWeeks, dispatchScheduleView]);
 
+  const copyToWeekOptions = useMemo(() => {
+    if (!copyFromWeekStart) return [] as string[];
+
+    const fromDate = parseLocalDate(copyFromWeekStart);
+    return Array.from({ length: 52 }, (_, index) =>
+      localDateIso(addDays(fromDate, (index + 1) * 7))
+    ).filter((iso) => iso >= todayWeekStartIso);
+  }, [copyFromWeekStart, todayWeekStartIso]);
+
+  useEffect(() => {
+    if (allDispatchScheduleWeeks.length === 0) {
+      setCopyFromWeekStart("");
+      setCopyToWeekStart("");
+      return;
+    }
+
+    const availableStarts = allDispatchScheduleWeeks.map((week) => week.weekStartIso);
+    const nextFrom =
+      copyFromWeekStart && availableStarts.includes(copyFromWeekStart)
+        ? copyFromWeekStart
+        : availableStarts[0];
+
+    const nextTo = localDateIso(addDays(parseLocalDate(nextFrom), 7));
+
+    setCopyFromWeekStart(nextFrom);
+    setCopyToWeekStart((current) => {
+      if (current && current > nextFrom) return current;
+      return nextTo;
+    });
+  }, [allDispatchScheduleWeeks, copyFromWeekStart]);
+
   const allAvailabilityWeeks = useMemo(
     () => groupItemsIntoWeeks(slots),
     [slots]
   );
+
+  const copyAvailabilityToWeekOptions = useMemo(() => {
+    if (!copyAvailabilityFromWeekStart) return [] as string[];
+
+    const fromDate = parseLocalDate(copyAvailabilityFromWeekStart);
+    return Array.from({ length: 52 }, (_, index) =>
+      localDateIso(addDays(fromDate, (index + 1) * 7))
+    ).filter((iso) => iso >= todayWeekStartIso);
+  }, [copyAvailabilityFromWeekStart, todayWeekStartIso]);
+
+  useEffect(() => {
+    if (!selectedDriverId || allAvailabilityWeeks.length === 0) {
+      setCopyAvailabilityFromWeekStart("");
+      setCopyAvailabilityToWeekStart("");
+      return;
+    }
+
+    const availableStarts = allAvailabilityWeeks.map((week) => week.weekStartIso);
+    const nextFrom =
+      copyAvailabilityFromWeekStart && availableStarts.includes(copyAvailabilityFromWeekStart)
+        ? copyAvailabilityFromWeekStart
+        : availableStarts[0];
+
+    const nextTo = localDateIso(addDays(parseLocalDate(nextFrom), 7));
+
+    setCopyAvailabilityFromWeekStart(nextFrom);
+    setCopyAvailabilityToWeekStart((current) => {
+      if (current && current > nextFrom) return current;
+      return nextTo;
+    });
+  }, [allAvailabilityWeeks, selectedDriverId, copyAvailabilityFromWeekStart]);
 
   const visibleAvailabilityWeeks = useMemo(() => {
     if (existingAvailabilityView === "all") return allAvailabilityWeeks;
@@ -556,6 +625,79 @@ export default function AvailabilityPage() {
     }
 
     setSuccessMessage("Availability removed.");
+    await refreshAllData(selectedDriverId);
+  }
+
+  async function handleCopyAvailabilityWeekForward() {
+    setErrorMessage(null);
+    setSuccessMessage(null);
+
+    if (!selectedDriverId) {
+      setErrorMessage("Please select a driver first.");
+      return;
+    }
+
+    if (!copyAvailabilityFromWeekStart || !copyAvailabilityToWeekStart) {
+      setErrorMessage("Please choose both source and destination weeks.");
+      return;
+    }
+
+    if (copyAvailabilityToWeekStart <= copyAvailabilityFromWeekStart) {
+      setErrorMessage("Destination week must be after the source week.");
+      return;
+    }
+
+    const sourceWeek = allAvailabilityWeeks.find(
+      (week) => week.weekStartIso === copyAvailabilityFromWeekStart
+    );
+
+    if (!sourceWeek) {
+      setErrorMessage("Source week is not available in existing availability.");
+      return;
+    }
+
+    const sourceItems = sourceWeek.days.flatMap((day) => day.items);
+
+    if (sourceItems.length === 0) {
+      setErrorMessage("Source week has no availability slots to copy.");
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Copy ${sourceItems.length} availability slot${sourceItems.length === 1 ? "" : "s"} from ${formatWeekRangeLabel(
+        copyAvailabilityFromWeekStart
+      )} to ${formatWeekRangeLabel(copyAvailabilityToWeekStart)}?`
+    );
+
+    if (!confirmed) return;
+
+    setIsCopyingAvailabilityWeek(true);
+
+    const { error } = await supabase.from("availability_slots").insert(
+      sourceItems.map((item) => {
+        const sourceDayIndex = sourceWeek.days.findIndex((day) => day.iso === item.service_date);
+        const targetServiceDate = localDateIso(
+          addDays(parseLocalDate(copyAvailabilityToWeekStart), sourceDayIndex >= 0 ? sourceDayIndex : 0)
+        );
+
+        return {
+          driver_id: selectedDriverId,
+          service_date: targetServiceDate,
+          start_time: item.start_time,
+          end_time: item.end_time,
+          availability_type: item.availability_type,
+        };
+      })
+    );
+
+    setIsCopyingAvailabilityWeek(false);
+
+    if (error) {
+      setErrorMessage(error.message);
+      return;
+    }
+
+    setSuccessMessage("Availability week copied forward.");
     await refreshAllData(selectedDriverId);
   }
 
@@ -713,6 +855,95 @@ export default function AvailabilityPage() {
 
     setSuccessMessage("Dispatch shift removed.");
     await refreshAllData(selectedDriverId);
+  }
+
+  async function handleCopyDispatchWeekForward() {
+    setErrorMessage(null);
+    setSuccessMessage(null);
+
+    if (!copyFromWeekStart || !copyToWeekStart) {
+      setErrorMessage("Please choose both source and destination weeks.");
+      return;
+    }
+
+    if (copyToWeekStart <= copyFromWeekStart) {
+      setErrorMessage("Destination week must be after the source week.");
+      return;
+    }
+
+    const sourceWeek = allDispatchScheduleWeeks.find(
+      (week) => week.weekStartIso === copyFromWeekStart
+    );
+
+    if (!sourceWeek) {
+      setErrorMessage("Source week is not available in the current schedule view.");
+      return;
+    }
+
+    const sourceItems = sourceWeek.days.flatMap((day) => day.items);
+
+    if (sourceItems.length === 0) {
+      setErrorMessage("Source week has no dispatch shifts to copy.");
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Copy ${sourceItems.length} dispatch shift${sourceItems.length === 1 ? "" : "s"} from ${formatWeekRangeLabel(
+        copyFromWeekStart
+      )} to ${formatWeekRangeLabel(copyToWeekStart)}?`
+    );
+
+    if (!confirmed) return;
+
+    setIsCopyingDispatchWeek(true);
+
+    const { error } = await supabase.from("dispatcher_schedule").insert(
+      sourceItems.map((item) => {
+        const sourceDayIndex = sourceWeek.days.findIndex((day) => day.iso === item.service_date);
+        const targetServiceDate = localDateIso(
+          addDays(parseLocalDate(copyToWeekStart), sourceDayIndex >= 0 ? sourceDayIndex : 0)
+        );
+
+        return {
+          dispatcher_name: item.dispatcher_name,
+          dispatcher_email: item.dispatcher_email,
+          service_date: targetServiceDate,
+          start_time: item.start_time,
+          end_time: item.end_time,
+          notes: item.notes,
+        };
+      })
+    );
+
+    setIsCopyingDispatchWeek(false);
+
+    if (error) {
+      setErrorMessage(error.message);
+      return;
+    }
+
+    const dispatchEndDate =
+      dispatchScheduleView === 1
+        ? addDaysIso(new Date(), 6)
+        : dispatchScheduleView === 2
+        ? addDaysIso(new Date(), 13)
+        : addDaysIso(new Date(), 365);
+
+    const { data: refreshedDispatchData, error: refreshError } = await supabase
+      .from("dispatcher_schedule")
+      .select("*")
+      .gte("service_date", todayIso)
+      .lte("service_date", dispatchEndDate)
+      .order("service_date", { ascending: true })
+      .order("start_time", { ascending: true });
+
+    if (refreshError) {
+      setErrorMessage(refreshError.message);
+      return;
+    }
+
+    setDispatchSchedule((refreshedDispatchData ?? []) as DispatchScheduleItem[]);
+    setSuccessMessage("Dispatch week copied forward.");
   }
 
   if (!authChecked) {
@@ -965,6 +1196,60 @@ export default function AvailabilityPage() {
           </form>
         )}
 
+        {canManageDispatchSchedule && allDispatchScheduleWeeks.length > 0 && (
+          <div className="mb-4 rounded-lg border border-amber-300 bg-amber-50 p-4 shadow-sm dark:border-amber-900 dark:bg-amber-950/40">
+            <div className="mb-2 text-sm font-semibold text-amber-900 dark:text-amber-100">
+              Copy Week Forward
+            </div>
+            <p className="mb-3 text-xs text-amber-800 dark:text-amber-200">
+              Copy all dispatch shifts from one week into a future week.
+            </p>
+
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+              <div>
+                <label className="mb-1 block text-sm font-medium">From week</label>
+                <select
+                  value={copyFromWeekStart}
+                  onChange={(e) => setCopyFromWeekStart(e.target.value)}
+                  className="w-full rounded border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+                >
+                  {allDispatchScheduleWeeks.map((week) => (
+                    <option key={week.weekStartIso} value={week.weekStartIso}>
+                      {formatWeekRangeLabel(week.weekStartIso)}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="mb-1 block text-sm font-medium">To week</label>
+                <select
+                  value={copyToWeekStart}
+                  onChange={(e) => setCopyToWeekStart(e.target.value)}
+                  className="w-full rounded border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+                >
+                  {copyToWeekOptions.map((weekStartIso) => (
+                    <option key={weekStartIso} value={weekStartIso}>
+                      {formatWeekRangeLabel(weekStartIso)}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="flex items-end">
+                <button
+                  type="button"
+                  onClick={handleCopyDispatchWeekForward}
+                  disabled={isCopyingDispatchWeek || !copyFromWeekStart || !copyToWeekStart}
+                  className="w-full rounded bg-amber-600 px-3 py-2 text-sm font-medium text-white hover:bg-amber-700 disabled:opacity-50"
+                >
+                  {isCopyingDispatchWeek ? "Copying..." : "Copy Forward"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         <div className="space-y-4">
           {visibleDispatchScheduleWeeks.map((week) => (
             <div
@@ -1196,60 +1481,63 @@ export default function AvailabilityPage() {
                 </div>
               )}
 
-              <div>
-                <label className="mb-1 block text-sm font-medium">Availability type</label>
-                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-4">
-                  <label className="flex items-center gap-2 text-sm">
-                    <input
-                      type="radio"
-                      name="availabilityType"
-                      value="available"
-                      checked={availabilityType === "available"}
-                      onChange={() => setAvailabilityType("available")}
-                      className="h-4 w-4"
-                    />
-                    Available
-                  </label>
-                  <label className="flex items-center gap-2 text-sm text-red-700 dark:text-red-300">
-                    <input
-                      type="radio"
-                      name="availabilityType"
-                      value="unavailable"
-                      checked={availabilityType === "unavailable"}
-                      onChange={() => setAvailabilityType("unavailable")}
-                      className="h-4 w-4"
-                    />
-                    Unavailable
-                  </label>
+              <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 lg:items-end">
+                <div>
+                  <label className="mb-1 block text-sm font-medium">Availability type</label>
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-4">
+                    <label className="flex items-center gap-2 text-sm">
+                      <input
+                        type="radio"
+                        name="availabilityType"
+                        value="available"
+                        checked={availabilityType === "available"}
+                        onChange={() => setAvailabilityType("available")}
+                        className="h-4 w-4"
+                      />
+                      Available
+                    </label>
+                    <label className="flex items-center gap-2 text-sm text-red-700 dark:text-red-300">
+                      <input
+                        type="radio"
+                        name="availabilityType"
+                        value="unavailable"
+                        checked={availabilityType === "unavailable"}
+                        onChange={() => setAvailabilityType("unavailable")}
+                        className="h-4 w-4"
+                      />
+                      Unavailable
+                    </label>
+                  </div>
                 </div>
-              </div>
 
-              <div>
-                <label className="mb-1 block text-sm font-medium">Date mode</label>
-                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-4">
-                  <label className="flex items-center gap-2 text-sm">
-                    <input
-                      type="radio"
-                      name="dateMode"
-                      value="single"
-                      checked={dateMode === "single"}
-                      onChange={() => setDateMode("single")}
-                      className="h-4 w-4"
-                    />
-                    Single date
-                  </label>
-                  <label className="flex items-center gap-2 text-sm">
-                    <input
-                      type="radio"
-                      name="dateMode"
-                      value="range"
-                      checked={dateMode === "range"}
-                      onChange={() => setDateMode("range")}
-                      className="h-4 w-4"
-                    />
-                    Date range
-                  </label>
+                <div>
+                  <label className="mb-1 block text-sm font-medium">Date mode</label>
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-4">
+                    <label className="flex items-center gap-2 text-sm">
+                      <input
+                        type="radio"
+                        name="dateMode"
+                        value="single"
+                        checked={dateMode === "single"}
+                        onChange={() => setDateMode("single")}
+                        className="h-4 w-4"
+                      />
+                      Single date
+                    </label>
+                    <label className="flex items-center gap-2 text-sm">
+                      <input
+                        type="radio"
+                        name="dateMode"
+                        value="range"
+                        checked={dateMode === "range"}
+                        onChange={() => setDateMode("range")}
+                        className="h-4 w-4"
+                      />
+                      Date range
+                    </label>
+                  </div>
                 </div>
+
               </div>
 
               {dateMode === "single" ? (
@@ -1343,6 +1631,56 @@ export default function AvailabilityPage() {
                   ? "Save unavailable"
                   : "Save availability"}
               </button>
+
+              <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 dark:border-amber-900 dark:bg-amber-950/40">
+                <div className="mb-1 text-xs font-semibold text-amber-900 dark:text-amber-100">
+                  Copy week forward
+                </div>
+                {selectedDriverId && allAvailabilityWeeks.length > 0 ? (
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr,1fr,auto] sm:items-end">
+                    <select
+                      value={copyAvailabilityFromWeekStart}
+                      onChange={(e) => setCopyAvailabilityFromWeekStart(e.target.value)}
+                      className="w-full rounded border border-zinc-300 bg-white px-2 py-1 text-xs text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+                    >
+                      {allAvailabilityWeeks.map((week) => (
+                        <option key={week.weekStartIso} value={week.weekStartIso}>
+                          {formatWeekRangeLabel(week.weekStartIso)}
+                        </option>
+                      ))}
+                    </select>
+
+                    <select
+                      value={copyAvailabilityToWeekStart}
+                      onChange={(e) => setCopyAvailabilityToWeekStart(e.target.value)}
+                      className="w-full rounded border border-zinc-300 bg-white px-2 py-1 text-xs text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+                    >
+                      {copyAvailabilityToWeekOptions.map((weekStartIso) => (
+                        <option key={weekStartIso} value={weekStartIso}>
+                          {formatWeekRangeLabel(weekStartIso)}
+                        </option>
+                      ))}
+                    </select>
+
+                    <button
+                      type="button"
+                      onClick={handleCopyAvailabilityWeekForward}
+                      disabled={
+                        isCopyingAvailabilityWeek ||
+                        !copyAvailabilityFromWeekStart ||
+                        !copyAvailabilityToWeekStart
+                      }
+                      className="rounded bg-amber-600 px-3 py-1 text-xs font-medium text-white hover:bg-amber-700 disabled:opacity-50"
+                    >
+                      {isCopyingAvailabilityWeek ? "Copying..." : "Copy"}
+                    </button>
+                  </div>
+                ) : (
+                  <div className="text-xs text-amber-800 dark:text-amber-200">
+                    No existing weeks to copy.
+                  </div>
+                )}
+              </div>
             </div>
           </form>
         </section>
