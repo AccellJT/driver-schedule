@@ -6,6 +6,7 @@ import { supabase } from "@/lib/supabase";
 
 type DriverApprovalStatus = "pending" | "approved" | "blocked";
 type AppRole = "admin" | "dispatch" | "driver" | "ops" | "manager";
+type AvailabilityType = "available" | "unavailable";
 
 type Driver = {
   id: string;
@@ -20,6 +21,7 @@ type AvailabilitySlot = {
   service_date: string;
   start_time: string;
   end_time: string;
+  availability_type: AvailabilityType;
 };
 
 type DispatchScheduleItem = {
@@ -199,12 +201,14 @@ export default function AvailabilityPage() {
   const [dispatchers, setDispatchers] = useState<DispatcherOption[]>([]);
 
   const [selectedDriverId, setSelectedDriverId] = useState("");
+  const [availabilityType, setAvailabilityType] = useState<AvailabilityType>("available");
   const [serviceDate, setServiceDate] = useState(localDateIso(new Date()));
   const [dateMode, setDateMode] = useState<"single" | "range">("single");
   const [rangeStartDate, setRangeStartDate] = useState(localDateIso(new Date()));
   const [rangeEndDate, setRangeEndDate] = useState(localDateIso(new Date()));
   const [startTime, setStartTime] = useState("08:00");
   const [endTime, setEndTime] = useState("10:00");
+  const [allDayUnavailable, setAllDayUnavailable] = useState(false);
 
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
@@ -359,6 +363,7 @@ export default function AvailabilityPage() {
         .eq("driver_id", selectedDriverId)
         .gte("service_date", todayIso)
         .order("service_date", { ascending: true })
+        .order("availability_type", { ascending: true })
         .order("start_time", { ascending: true });
 
       if (error) {
@@ -454,6 +459,7 @@ export default function AvailabilityPage() {
         .eq("driver_id", driverId)
         .gte("service_date", todayIso)
         .order("service_date", { ascending: true })
+        .order("availability_type", { ascending: true })
         .order("start_time", { ascending: true }),
       supabase
         .from("dispatcher_schedule")
@@ -497,7 +503,7 @@ export default function AvailabilityPage() {
       return;
     }
 
-    if (endTime <= startTime) {
+    if ((availabilityType === "available" || (availabilityType === "unavailable" && !allDayUnavailable)) && endTime <= startTime) {
       setErrorMessage("End time must be later than start time.");
       return;
     }
@@ -516,8 +522,9 @@ export default function AvailabilityPage() {
       selectedDates.map((date) => ({
         driver_id: selectedDriverId,
         service_date: date,
-        start_time: startTime,
-        end_time: endTime,
+        start_time: availabilityType === "unavailable" && allDayUnavailable ? "00:00" : startTime,
+        end_time: availabilityType === "unavailable" && allDayUnavailable ? "00:00" : endTime,
+        availability_type: availabilityType,
       }))
     );
 
@@ -528,10 +535,11 @@ export default function AvailabilityPage() {
       return;
     }
 
+    setAvailabilityType("available");
     setSuccessMessage(
-      `Availability saved for ${selectedDates.length} date${
-        selectedDates.length === 1 ? "" : "s"
-      }.`
+      `${availabilityType === "unavailable" ? "Unavailable" : "Availability"} saved for ${
+        selectedDates.length
+      } date${selectedDates.length === 1 ? "" : "s"}.`
     );
     await refreshAllData(selectedDriverId);
   }
@@ -727,14 +735,14 @@ export default function AvailabilityPage() {
 
       <div className="mb-6 flex flex-wrap gap-2">
         {(currentRole === "admin" || currentRole === "dispatch") && (
-        <button
-          type="button"
-          onClick={() => router.push("/weekly")}
-          className="rounded bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700"
-        >
-          Dispatcher Page
-        </button>
-      )}
+          <button
+            type="button"
+            onClick={() => router.push("/weekly")}
+            className="rounded bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700"
+          >
+            Dispatcher Page
+          </button>
+        )}
         <button
           type="button"
           onClick={() => router.push("/availability")}
@@ -967,15 +975,15 @@ export default function AvailabilityPage() {
                 {formatWeekRangeLabel(week.weekStartIso)}
               </div>
 
-              <div className="overflow-x-auto">
-                <div className="grid min-w-[900px] sm:min-w-[1120px] grid-cols-7 gap-3">
+              <div className="-mx-2 overflow-x-auto px-2 pb-2 sm:mx-0 sm:px-0">
+                <div className="grid min-w-[860px] snap-x snap-mandatory grid-cols-7 gap-3 sm:min-w-[1120px]">
                   {week.days.map((day) => {
                     const isToday = day.iso === todayIso;
 
                     return (
                       <div
                         key={day.iso}
-                        className={`rounded border p-2 ${
+                        className={`snap-start rounded border p-2 ${
                           isToday
                             ? "border-blue-300 bg-blue-50 dark:border-blue-900 dark:bg-blue-950/40"
                             : "border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900"
@@ -1148,7 +1156,7 @@ export default function AvailabilityPage() {
         </div>
       </section>
 
-      <div className="flex flex-col gap-6 lg:grid lg:grid-cols-[420px,1fr]">
+      <div className="grid gap-6 2xl:grid-cols-[420px,1fr]">
         <section className="rounded-xl border border-blue-300 bg-blue-50 p-4 shadow-md dark:border-blue-900 dark:bg-blue-950/40 sm:p-5">
           <div className="mb-4">
             <h2 className="text-lg font-semibold text-blue-900 dark:text-blue-100">
@@ -1160,132 +1168,190 @@ export default function AvailabilityPage() {
           </div>
 
           <form className="space-y-4" onSubmit={handleSubmit}>
-            {canManageDriverAvailability && (
-              <div>
-                <label className="mb-1 block text-sm font-medium">Driver</label>
-                <select
-                  value={selectedDriverId}
-                  onChange={(e) => setSelectedDriverId(e.target.value)}
-                  className="w-full rounded border border-zinc-300 bg-white px-3 py-2 text-zinc-900 shadow-sm dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
-                >
-                  {drivers.map((driver) => (
-                    <option key={driver.id} value={driver.id}>
-                      {driver.full_name}
-                      {driver.vehicle_label ? ` — ${driver.vehicle_label}` : ""}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            )}
+            <div className="space-y-4 rounded-xl border border-blue-200/70 bg-white/80 p-4 shadow-sm dark:border-blue-900/70 dark:bg-zinc-900/80">
+              {canManageDriverAvailability && (
+                <div>
+                  <label className="mb-1 block text-sm font-medium">Driver</label>
+                  <select
+                    value={selectedDriverId}
+                    onChange={(e) => setSelectedDriverId(e.target.value)}
+                    className="w-full rounded border border-zinc-300 bg-white px-3 py-3 text-zinc-900 shadow-sm dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100 sm:py-2"
+                  >
+                    {drivers.map((driver) => (
+                      <option key={driver.id} value={driver.id}>
+                        {driver.full_name}
+                        {driver.vehicle_label ? ` — ${driver.vehicle_label}` : ""}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
 
-            {currentRole === "driver" && selectedDriver && (
-              <div className="rounded border border-blue-200 bg-white p-3 text-sm dark:border-blue-900 dark:bg-zinc-900">
-                <div className="font-medium">{selectedDriver.full_name}</div>
-                <div className="text-zinc-600 dark:text-zinc-400">
-                  {selectedDriver.vehicle_label ? selectedDriver.vehicle_label : "No vehicle"}
+              {currentRole === "driver" && selectedDriver && (
+                <div className="rounded border border-blue-200 bg-white p-3 text-sm dark:border-blue-900 dark:bg-zinc-900">
+                  <div className="font-medium">{selectedDriver.full_name}</div>
+                  <div className="text-zinc-600 dark:text-zinc-400">
+                    {selectedDriver.vehicle_label ? selectedDriver.vehicle_label : "No vehicle"}
+                  </div>
+                </div>
+              )}
+
+              <div>
+                <label className="mb-1 block text-sm font-medium">Availability type</label>
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-4">
+                  <label className="flex items-center gap-2 text-sm">
+                    <input
+                      type="radio"
+                      name="availabilityType"
+                      value="available"
+                      checked={availabilityType === "available"}
+                      onChange={() => setAvailabilityType("available")}
+                      className="h-4 w-4"
+                    />
+                    Available
+                  </label>
+                  <label className="flex items-center gap-2 text-sm text-red-700 dark:text-red-300">
+                    <input
+                      type="radio"
+                      name="availabilityType"
+                      value="unavailable"
+                      checked={availabilityType === "unavailable"}
+                      onChange={() => setAvailabilityType("unavailable")}
+                      className="h-4 w-4"
+                    />
+                    Unavailable
+                  </label>
                 </div>
               </div>
-            )}
 
-            <div>
-              <label className="mb-1 block text-sm font-medium">Date mode</label>
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-4">
-                <label className="flex items-center gap-2 text-sm">
-                  <input
-                    type="radio"
-                    name="dateMode"
-                    value="single"
-                    checked={dateMode === "single"}
-                    onChange={() => setDateMode("single")}
-                    className="h-4 w-4"
-                  />
-                  Single date
-                </label>
-                <label className="flex items-center gap-2 text-sm">
-                  <input
-                    type="radio"
-                    name="dateMode"
-                    value="range"
-                    checked={dateMode === "range"}
-                    onChange={() => setDateMode("range")}
-                    className="h-4 w-4"
-                  />
-                  Date range
-                </label>
-              </div>
-            </div>
-
-            {dateMode === "single" ? (
               <div>
-                <label className="mb-1 block text-sm font-medium">Date</label>
-                <input
-                  type="date"
-                  value={serviceDate}
-                  onChange={(e) => setServiceDate(e.target.value)}
-                  className="w-full rounded border border-zinc-300 bg-white px-3 py-2 text-zinc-900 shadow-sm dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
-                />
+                <label className="mb-1 block text-sm font-medium">Date mode</label>
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-4">
+                  <label className="flex items-center gap-2 text-sm">
+                    <input
+                      type="radio"
+                      name="dateMode"
+                      value="single"
+                      checked={dateMode === "single"}
+                      onChange={() => setDateMode("single")}
+                      className="h-4 w-4"
+                    />
+                    Single date
+                  </label>
+                  <label className="flex items-center gap-2 text-sm">
+                    <input
+                      type="radio"
+                      name="dateMode"
+                      value="range"
+                      checked={dateMode === "range"}
+                      onChange={() => setDateMode("range")}
+                      className="h-4 w-4"
+                    />
+                    Date range
+                  </label>
+                </div>
               </div>
-            ) : (
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+
+              {dateMode === "single" ? (
                 <div>
-                  <label className="mb-1 block text-sm font-medium">Start date</label>
+                  <label className="mb-1 block text-sm font-medium">Date</label>
                   <input
                     type="date"
-                    value={rangeStartDate}
-                    onChange={(e) => setRangeStartDate(e.target.value)}
-                    className="w-full rounded border border-zinc-300 bg-white px-3 py-2 text-zinc-900 shadow-sm dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+                    value={serviceDate}
+                    onChange={(e) => setServiceDate(e.target.value)}
+                    className="w-full rounded border border-zinc-300 bg-white px-3 py-3 text-zinc-900 shadow-sm dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100 sm:py-2"
                   />
                 </div>
+              ) : (
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <div>
+                    <label className="mb-1 block text-sm font-medium">Start date</label>
+                    <input
+                      type="date"
+                      value={rangeStartDate}
+                      onChange={(e) => setRangeStartDate(e.target.value)}
+                      className="w-full rounded border border-zinc-300 bg-white px-3 py-3 text-zinc-900 shadow-sm dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100 sm:py-2"
+                    />
+                  </div>
 
+                  <div>
+                    <label className="mb-1 block text-sm font-medium">End date</label>
+                    <input
+                      type="date"
+                      value={rangeEndDate}
+                      onChange={(e) => setRangeEndDate(e.target.value)}
+                      className="w-full rounded border border-zinc-300 bg-white px-3 py-3 text-zinc-900 shadow-sm dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100 sm:py-2"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {availabilityType === "unavailable" && (
                 <div>
-                  <label className="mb-1 block text-sm font-medium">End date</label>
-                  <input
-                    type="date"
-                    value={rangeEndDate}
-                    onChange={(e) => setRangeEndDate(e.target.value)}
-                    className="w-full rounded border border-zinc-300 bg-white px-3 py-2 text-zinc-900 shadow-sm dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
-                  />
+                  <label className="flex items-center gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={allDayUnavailable}
+                      onChange={(e) => setAllDayUnavailable(e.target.checked)}
+                      className="h-4 w-4"
+                    />
+                    All day (no specific time window)
+                  </label>
                 </div>
-              </div>
-            )}
+              )}
 
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <div>
-                <label className="mb-1 block text-sm font-medium">Start time</label>
-                <input
-                  type="time"
-                  value={startTime}
-                  onChange={(e) => setStartTime(e.target.value)}
-                  className="w-full rounded border border-zinc-300 bg-white px-3 py-2 text-zinc-900 shadow-sm dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
-                />
-              </div>
+              {(availabilityType === "available" || (availabilityType === "unavailable" && !allDayUnavailable)) ? (
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <div>
+                    <label className="mb-1 block text-sm font-medium">Start time</label>
+                    <input
+                      type="time"
+                      value={startTime}
+                      onChange={(e) => setStartTime(e.target.value)}
+                      className="w-full rounded border border-zinc-300 bg-white px-3 py-3 text-zinc-900 shadow-sm dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100 sm:py-2"
+                    />
+                  </div>
 
-              <div>
-                <label className="mb-1 block text-sm font-medium">End time</label>
-                <input
-                  type="time"
-                  value={endTime}
-                  onChange={(e) => setEndTime(e.target.value)}
-                  className="w-full rounded border border-zinc-300 bg-white px-3 py-2 text-zinc-900 shadow-sm dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
-                />
-              </div>
+                  <div>
+                    <label className="mb-1 block text-sm font-medium">End time</label>
+                    <input
+                      type="time"
+                      value={endTime}
+                      onChange={(e) => setEndTime(e.target.value)}
+                      className="w-full rounded border border-zinc-300 bg-white px-3 py-3 text-zinc-900 shadow-sm dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100 sm:py-2"
+                    />
+                  </div>
+                </div>
+              ) : (
+                <div className="rounded border border-red-300 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-200">
+                  This will save the selected date(s) as unavailable all day.
+                </div>
+              )}
+
+              <button
+                type="submit"
+                disabled={isSaving}
+                className={`w-full rounded px-4 py-3 text-white disabled:opacity-50 sm:w-auto sm:py-2 ${
+                  availabilityType === "unavailable"
+                    ? "bg-red-600 hover:bg-red-700"
+                    : "bg-blue-600 hover:bg-blue-700"
+                }`}
+              >
+                {isSaving
+                  ? "Saving..."
+                  : availabilityType === "unavailable"
+                  ? "Save unavailable"
+                  : "Save availability"}
+              </button>
             </div>
-
-            <button
-              type="submit"
-              disabled={isSaving}
-              className="w-full rounded bg-blue-600 px-4 py-2 text-white disabled:opacity-50 sm:w-auto"
-            >
-              {isSaving ? "Saving..." : "Save availability"}
-            </button>
           </form>
         </section>
 
-        <section className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900 sm:p-5 w-full overflow-hidden">
+        <section className="overflow-hidden rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900 sm:p-5">
           <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <h2 className="text-lg font-medium">Existing Availability</h2>
-            {selectedDriver && (
+              {selectedDriver && (
                 <p className="text-sm text-zinc-600 dark:text-zinc-400">
                   {selectedDriver.full_name}
                   {selectedDriver.vehicle_label ? ` — ${selectedDriver.vehicle_label}` : ""}
@@ -1322,15 +1388,15 @@ export default function AvailabilityPage() {
                     {formatWeekRangeLabel(week.weekStartIso)}
                   </div>
 
-                  <div className="overflow-x-auto pb-2">
-                    <div className="grid min-w-[900px] sm:min-w-[1120px] grid-cols-7 gap-3">
+                  <div className="-mx-2 overflow-x-auto px-2 pb-2 sm:mx-0 sm:px-0">
+                    <div className="grid min-w-[860px] snap-x snap-mandatory grid-cols-7 gap-3 sm:min-w-[1120px]">
                       {week.days.map((day) => {
                         const isToday = day.iso === todayIso;
 
                         return (
                           <div
                             key={day.iso}
-                            className={`rounded border p-2 ${
+                            className={`snap-start rounded border p-2 ${
                               isToday
                                 ? "border-blue-300 bg-blue-50 dark:border-blue-900 dark:bg-blue-950/40"
                                 : "border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900"
@@ -1358,10 +1424,26 @@ export default function AvailabilityPage() {
                                 day.items.map((slot) => (
                                   <div
                                     key={slot.id}
-                                    className="rounded border border-zinc-200 bg-zinc-50 p-2 text-xs dark:border-zinc-800 dark:bg-zinc-950"
+                                    className={`rounded border p-2 text-xs ${
+                                      slot.availability_type === "unavailable"
+                                        ? "border-red-300 bg-red-50 dark:border-red-900 dark:bg-red-950/40"
+                                        : "border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-950"
+                                    }`}
                                   >
-                                    <div className="font-medium">
-                                      {formatTime(slot.start_time)} - {formatTime(slot.end_time)}
+                                    <div
+                                      className={`font-medium ${
+                                        slot.availability_type === "unavailable"
+                                          ? "text-red-700 dark:text-red-300"
+                                          : ""
+                                      }`}
+                                    >
+                                      {slot.availability_type === "unavailable"
+                                        ? slot.start_time === "00:00" && slot.end_time === "00:00"
+                                          ? "Unavailable (all day)"
+                                          : `Unavailable ${formatTime(slot.start_time)} - ${formatTime(slot.end_time)}`
+                                        : `${formatTime(slot.start_time)} - ${formatTime(
+                                            slot.end_time
+                                          )}`}
                                     </div>
 
                                     <div className="mt-2 flex gap-1">

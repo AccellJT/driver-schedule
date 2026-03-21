@@ -21,6 +21,7 @@ type AvailabilitySlot = {
   service_date: string;
   start_time: string;
   end_time: string;
+  availability_type: "available" | "unavailable";
 };
 
 function getWeekDays(dayCount: number = 7) {
@@ -67,6 +68,32 @@ function formatSlotTime(value: string) {
     : `${hour12}:${minutes.toString().padStart(2, "0")} ${suffix}`;
 }
 
+function addDaysToIso(baseIso: string, days: number): string {
+  const [y, m, d] = baseIso.split("-").map(Number);
+  const date = new Date(y, m - 1, d + days);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
+function makeDayEntry(iso: string): { labelTop: string; labelBottom: string; iso: string } {
+  const [y, m, d] = iso.split("-").map(Number);
+  const date = new Date(y, m - 1, d);
+  return {
+    iso,
+    labelTop: date.toLocaleDateString("en-US", { weekday: "short" }),
+    labelBottom: date.toLocaleDateString("en-US", { month: "numeric", day: "numeric" }),
+  };
+}
+
+function getDatesInRange(startIso: string, endIso: string) {
+  const results: ReturnType<typeof makeDayEntry>[] = [];
+  let current = startIso;
+  while (current <= endIso) {
+    results.push(makeDayEntry(current));
+    current = addDaysToIso(current, 1);
+  }
+  return results;
+}
+
 function overlapsExisting(
   startTime: string,
   endTime: string,
@@ -100,11 +127,6 @@ function DayTimeline({
   const totalMinutes = timelineEnd - timelineStart;
   const ticks = [5, 8, 11, 14, 17, 20, 23];
   const timelineHeight = Math.max(56, slots.length * 24 + 12);
-
-  const barClasses =
-    driverStatus === "pending"
-      ? "bg-amber-500 text-white"
-      : "bg-blue-500 text-white";
 
   return (
     <div className="min-w-[220px]">
@@ -152,22 +174,39 @@ function DayTimeline({
         {slots.map((slot, index) => {
           const start = timeToMinutes(slot.start_time);
           const end = timeToMinutes(slot.end_time);
-          const left = ((start - timelineStart) / totalMinutes) * 100;
-          const width = ((end - start) / totalMinutes) * 100;
+          const isFullDayUnavailable =
+            slot.availability_type === "unavailable" && start === 0 && end === 0;
+          const actualStart = isFullDayUnavailable ? timelineStart : start;
+          const actualEnd = isFullDayUnavailable ? timelineEnd : end;
+          const left = ((actualStart - timelineStart) / totalMinutes) * 100;
+          const width = ((actualEnd - actualStart) / totalMinutes) * 100;
+
+          const barClasses =
+            slot.availability_type === "unavailable"
+              ? "bg-red-500 text-white"
+              : driverStatus === "pending"
+              ? "bg-amber-500 text-white"
+              : "bg-blue-500 text-white";
+
+          const label =
+            slot.availability_type === "unavailable"
+              ? isFullDayUnavailable
+                ? "Unavailable"
+                : "Unavail " + formatSlotTime(slot.start_time) + "-" + formatSlotTime(slot.end_time)
+              : formatSlotTime(slot.start_time) + "-" + formatSlotTime(slot.end_time);
 
           return (
             <div
               key={slot.id}
-              className={`absolute h-5 rounded text-[10px] ${barClasses}`}
+              className={"absolute h-5 rounded text-[10px] " + barClasses}
               style={{
-                top: `${8 + index * 22}px`,
-                left: `${left}%`,
-                width: `${Math.max(width, 4)}%`,
+                top: (8 + index * 22) + "px",
+                left: left + "%",
+                width: Math.max(width, 4) + "%",
               }}
-              title={`${formatSlotTime(slot.start_time)}-${formatSlotTime(slot.end_time)}`}
             >
               <div className="flex h-full items-center justify-center truncate px-1">
-                {formatSlotTime(slot.start_time)}-{formatSlotTime(slot.end_time)}
+                {label}
               </div>
             </div>
           );
@@ -190,14 +229,18 @@ export default function WeeklyPage() {
   const [slots, setSlots] = useState<AvailabilitySlot[]>([]);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
-  const [viewDays, setViewDays] = useState<1 | 3 | 7>(7);
+  const [viewMode, setViewMode] = useState<"day" | 3 | 7 | "all">(7);
+  const [selectedDay, setSelectedDay] = useState(() => {
+    const t = new Date();
+    return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, "0")}-${String(t.getDate()).padStart(2, "0")}`;
+  });
   const [editingCell, setEditingCell] = useState<{
     driverId: string;
     serviceDate: string;
   } | null>(null);
-  const [newSlot, setNewSlot] = useState({ start_time: "08:00", end_time: "10:00" });
+  const [newSlot, setNewSlot] = useState({ start_time: "08:00", end_time: "10:00", availability_type: "available" as "available" | "unavailable" });
   const [editedSlots, setEditedSlots] = useState<
-    Record<string, { start_time: string; end_time: string }>
+    Record<string, { start_time: string; end_time: string; availability_type: "available" | "unavailable" }>
   >({});
   const [isSavingCell, setIsSavingCell] = useState(false);
   const [confirmRemoveDriverId, setConfirmRemoveDriverId] = useState<string | null>(null);
@@ -210,11 +253,24 @@ export default function WeeklyPage() {
   const [newDriverVehicle, setNewDriverVehicle] = useState("");
   const [isAddingDriver, setIsAddingDriver] = useState(false);
 
-  const weekDays = useMemo(() => getWeekDays(viewDays), [viewDays]);
   const today = new Date();
   const todayIso = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(
     today.getDate()
   ).padStart(2, "0")}`;
+
+  const weekDays = useMemo(() => {
+    if (viewMode === "day") {
+      return [makeDayEntry(selectedDay)];
+    }
+    if (viewMode === "all") {
+      const futureDates = [...new Set(slots.map((s) => s.service_date))]
+        .filter((d) => d >= todayIso)
+        .sort();
+      if (futureDates.length === 0) return [makeDayEntry(todayIso)];
+      return getDatesInRange(futureDates[0], futureDates[futureDates.length - 1]);
+    }
+    return getWeekDays(viewMode);
+  }, [viewMode, selectedDay, slots, todayIso]);
 
   const activeNowDriverIds = useMemo(() => {
     const nowMinutes = today.getHours() * 60 + today.getMinutes();
@@ -236,10 +292,29 @@ export default function WeeklyPage() {
     );
   }, [slots, todayIso]);
 
+  const selectedDayDriverIds = useMemo(() => {
+    if (viewMode !== "day") return new Set<string>();
+    return new Set(
+      slots
+        .filter((slot) => slot.service_date === selectedDay)
+        .map((slot) => slot.driver_id)
+    );
+  }, [slots, selectedDay, viewMode]);
+
   const sortedDrivers = useMemo(() => {
     const getFirstName = (name: string) => name.split(" ")[0]?.toLowerCase() ?? "";
 
     return [...drivers].sort((a, b) => {
+      if (viewMode === "day") {
+        const aHasSelectedDaySlot = selectedDayDriverIds.has(a.id);
+        const bHasSelectedDaySlot = selectedDayDriverIds.has(b.id);
+        if (aHasSelectedDaySlot !== bHasSelectedDaySlot) {
+          return aHasSelectedDaySlot ? -1 : 1;
+        }
+
+        return a.full_name.localeCompare(b.full_name);
+      }
+
       const aActive = activeNowDriverIds.has(a.id);
       const bActive = activeNowDriverIds.has(b.id);
       if (aActive !== bActive) return aActive ? -1 : 1;
@@ -256,7 +331,7 @@ export default function WeeklyPage() {
       const bFirst = getFirstName(b.full_name);
       return aFirst.localeCompare(bFirst);
     });
-  }, [drivers, activeNowDriverIds, todayDriverIds]);
+  }, [drivers, activeNowDriverIds, todayDriverIds, viewMode, selectedDayDriverIds]);
 
   useEffect(() => {
     async function checkAccess() {
@@ -293,10 +368,22 @@ export default function WeeklyPage() {
   }, [router]);
 
   const loadData = useCallback(async () => {
-    const weekStart = weekDays[0]?.iso;
-    const weekEnd = weekDays[weekDays.length - 1]?.iso;
+    const t = new Date();
+    const todayStr = `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, "0")}-${String(t.getDate()).padStart(2, "0")}`;
 
-    if (!weekStart || !weekEnd) return;
+    let rangeStart: string;
+    let rangeEnd: string;
+
+    if (viewMode === "day") {
+      rangeStart = selectedDay;
+      rangeEnd = selectedDay;
+    } else if (viewMode === "all") {
+      rangeStart = todayStr;
+      rangeEnd = addDaysToIso(todayStr, 365);
+    } else {
+      rangeStart = todayStr;
+      rangeEnd = addDaysToIso(todayStr, viewMode - 1);
+    }
 
     setErrorMessage(null);
 
@@ -312,8 +399,8 @@ export default function WeeklyPage() {
       supabase
         .from("availability_slots")
         .select("*")
-        .gte("service_date", weekStart)
-        .lte("service_date", weekEnd)
+        .gte("service_date", rangeStart)
+        .lte("service_date", rangeEnd)
         .order("service_date")
         .order("start_time"),
     ]);
@@ -330,7 +417,7 @@ export default function WeeklyPage() {
 
     setDrivers((driverData ?? []) as Driver[]);
     setSlots((slotData ?? []) as AvailabilitySlot[]);
-  }, [weekDays]);
+  }, [viewMode, selectedDay]);
 
   useEffect(() => {
     if (!authChecked) return;
@@ -393,6 +480,7 @@ export default function WeeklyPage() {
       service_date: editingCell.serviceDate,
       start_time: newSlot.start_time,
       end_time: newSlot.end_time,
+      availability_type: newSlot.availability_type,
     });
 
     setIsSavingCell(false);
@@ -403,7 +491,7 @@ export default function WeeklyPage() {
     }
 
     setSuccessMessage("Availability added.");
-    setNewSlot({ start_time: "08:00", end_time: "10:00" });
+    setNewSlot({ start_time: "08:00", end_time: "10:00", availability_type: "available" });
     await loadData();
   }
 
@@ -429,6 +517,7 @@ export default function WeeklyPage() {
     const target = editedSlots[slot.id] ?? {
       start_time: slot.start_time,
       end_time: slot.end_time,
+      availability_type: slot.availability_type,
     };
 
     setErrorMessage(null);
@@ -451,6 +540,7 @@ export default function WeeklyPage() {
       .update({
         start_time: target.start_time,
         end_time: target.end_time,
+        availability_type: target.availability_type,
       })
       .eq("id", slot.id);
 
@@ -565,7 +655,8 @@ export default function WeeklyPage() {
   }
 
   const tableMinWidth =
-    viewDays === 1 ? "min-w-[720px]" : viewDays === 3 ? "min-w-[900px]" : "min-w-[1200px]";
+    viewMode === "day" ? "min-w-[720px]" : viewMode === 3 ? "min-w-[900px]" : "min-w-[1200px]";
+  const compactDriverColumn = viewMode === "day" || viewMode === 3;
 
   if (!authChecked) {
     return <div className="min-h-screen p-10 text-sm text-gray-500">Checking access...</div>;
@@ -596,17 +687,33 @@ export default function WeeklyPage() {
             Availability
           </button>
 
-          {[1, 3, 7].map((n) => (
+          <input
+            type="date"
+            value={selectedDay}
+            min={todayIso}
+            onChange={(e) => {
+              if (!e.target.value) return;
+              setSelectedDay(e.target.value);
+              setViewMode("day");
+            }}
+            className={`rounded border px-2 py-1.5 text-sm ${
+              viewMode === "day"
+                ? "border-blue-700 bg-blue-700 text-white [color-scheme:dark]"
+                : "border-gray-300 bg-white text-gray-700"
+            }`}
+          />
+
+          {([3, 7, "all"] as const).map((n) => (
             <button
-              key={n}
-              onClick={() => setViewDays(n as 1 | 3 | 7)}
+              key={String(n)}
+              onClick={() => setViewMode(n)}
               className={`rounded px-3 py-2 text-sm font-medium ${
-                viewDays === n
+                viewMode === n
                   ? "bg-blue-700 text-white"
                   : "bg-gray-200 text-gray-700 hover:bg-gray-300"
               }`}
             >
-              {n === 1 ? "1 day" : n === 3 ? "3 day" : "7 day"}
+              {n === 3 ? "3 day" : n === 7 ? "7 day" : "All"}
             </button>
           ))}
 
@@ -656,7 +763,11 @@ export default function WeeklyPage() {
         <table className={`w-full table-auto border-collapse ${tableMinWidth}`}>
           <thead>
             <tr className="border-b shadow-lg">
-              <th className="sticky top-0 z-30 bg-black/90 px-2 py-3 text-right text-lg font-bold text-gray-300">
+              <th
+                className={`sticky top-0 z-30 bg-black/90 px-2 py-3 text-lg font-bold text-gray-300 ${
+                  compactDriverColumn ? "w-px whitespace-nowrap text-right" : "text-right"
+                }`}
+              >
                 Driver
               </th>
               {weekDays.map((day) => {
@@ -680,8 +791,12 @@ export default function WeeklyPage() {
           <tbody>
             {sortedDrivers.map((driver) => (
               <tr key={driver.id} className="border-b align-top">
-                <td className="p-2 align-top text-right">
-                  <div className="flex flex-wrap items-center justify-end gap-1">
+                <td
+                  className={`p-2 align-top text-right ${
+                    compactDriverColumn ? "w-px whitespace-nowrap" : ""
+                  }`}
+                >
+                  <div className="ml-auto flex w-fit flex-wrap items-center justify-end gap-1">
                     <span className="text-sm font-medium">{driver.full_name}</span>
 
                     {driver.approval_status === "pending" && (
@@ -725,7 +840,9 @@ export default function WeeklyPage() {
                     )}
                   </div>
 
-                  <div className="text-right text-xs text-gray-500">{driver.vehicle_label}</div>
+                  <div className="ml-auto w-fit text-right text-xs text-gray-500">
+                    {driver.vehicle_label}
+                  </div>
                 </td>
 
                 {weekDays.map((day) => {
@@ -755,7 +872,7 @@ export default function WeeklyPage() {
 
             {drivers.length === 0 && !errorMessage && (
               <tr>
-                <td colSpan={viewDays + 1} className="p-4 text-sm text-gray-500">
+                <td colSpan={weekDays.length + 1} className="p-4 text-sm text-gray-500">
                   No drivers found.
                 </td>
               </tr>
@@ -850,6 +967,46 @@ export default function WeeklyPage() {
               ) : (
                 activeCellSlots.map((slot) => (
                   <div key={slot.id} className="rounded border border-gray-200 p-2">
+                    <div className="mb-2 flex gap-2">
+                      <label className="flex items-center gap-1 text-xs">
+                        <input
+                          type="radio"
+                          name={`type-${slot.id}`}
+                          value="available"
+                          checked={(editedSlots[slot.id]?.availability_type ?? slot.availability_type) === "available"}
+                          onChange={() =>
+                            setEditedSlots((prev) => ({
+                              ...prev,
+                              [slot.id]: {
+                                start_time: prev[slot.id]?.start_time ?? slot.start_time,
+                                end_time: prev[slot.id]?.end_time ?? slot.end_time,
+                                availability_type: "available",
+                              },
+                            }))
+                          }
+                        />
+                        Available
+                      </label>
+                      <label className="flex items-center gap-1 text-xs">
+                        <input
+                          type="radio"
+                          name={`type-${slot.id}`}
+                          value="unavailable"
+                          checked={(editedSlots[slot.id]?.availability_type ?? slot.availability_type) === "unavailable"}
+                          onChange={() =>
+                            setEditedSlots((prev) => ({
+                              ...prev,
+                              [slot.id]: {
+                                start_time: prev[slot.id]?.start_time ?? slot.start_time,
+                                end_time: prev[slot.id]?.end_time ?? slot.end_time,
+                                availability_type: "unavailable",
+                              },
+                            }))
+                          }
+                        />
+                        Unavailable
+                      </label>
+                    </div>
                     <div className="flex gap-2">
                       <input
                         value={editedSlots[slot.id]?.start_time ?? slot.start_time}
@@ -860,6 +1017,7 @@ export default function WeeklyPage() {
                             [slot.id]: {
                               start_time: updatedStart,
                               end_time: prev[slot.id]?.end_time ?? slot.end_time,
+                              availability_type: prev[slot.id]?.availability_type ?? slot.availability_type,
                             },
                           }));
                         }}
@@ -875,6 +1033,7 @@ export default function WeeklyPage() {
                             [slot.id]: {
                               start_time: prev[slot.id]?.start_time ?? slot.start_time,
                               end_time: updatedEnd,
+                              availability_type: prev[slot.id]?.availability_type ?? slot.availability_type,
                             },
                           }));
                         }}
@@ -905,6 +1064,28 @@ export default function WeeklyPage() {
 
             <div className="mt-4 rounded border border-gray-200 p-3">
               <h3 className="mb-2 text-sm font-medium">Add slot</h3>
+              <div className="mb-2 flex gap-2">
+                <label className="flex items-center gap-1 text-xs">
+                  <input
+                    type="radio"
+                    name="newType"
+                    value="available"
+                    checked={newSlot.availability_type === "available"}
+                    onChange={() => setNewSlot((prev) => ({ ...prev, availability_type: "available" }))}
+                  />
+                  Available
+                </label>
+                <label className="flex items-center gap-1 text-xs">
+                  <input
+                    type="radio"
+                    name="newType"
+                    value="unavailable"
+                    checked={newSlot.availability_type === "unavailable"}
+                    onChange={() => setNewSlot((prev) => ({ ...prev, availability_type: "unavailable" }))}
+                  />
+                  Unavailable
+                </label>
+              </div>
               <div className="grid grid-cols-2 gap-2">
                 <input
                   type="time"
