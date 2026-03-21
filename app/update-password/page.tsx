@@ -13,6 +13,14 @@ export default function UpdatePasswordPage() {
   const [isSaving, setIsSaving] = useState(false);
 
   useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const query = window.location.search || "";
+    const hash = window.location.hash || "";
+    router.replace(`/reset-password${query}${hash}`);
+  }, [router]);
+
+  useEffect(() => {
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((event) => {
