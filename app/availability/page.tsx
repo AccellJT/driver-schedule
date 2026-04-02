@@ -433,72 +433,78 @@ export default function AvailabilityPage() {
     return allDispatchScheduleWeeks.slice(0, dispatchScheduleView);
   }, [allDispatchScheduleWeeks, dispatchScheduleView]);
 
-  const copyToWeekOptions = useMemo(() => {
-    if (!copyFromWeekStart) return [] as string[];
+  const dispatchWeekStarts = useMemo(
+    () => allDispatchScheduleWeeks.map((week) => week.weekStartIso),
+    [allDispatchScheduleWeeks]
+  );
 
-    const fromDate = parseLocalDate(copyFromWeekStart);
+  const effectiveCopyFromWeekStart = useMemo(() => {
+    if (dispatchWeekStarts.length === 0) return "";
+    if (copyFromWeekStart && dispatchWeekStarts.includes(copyFromWeekStart)) {
+      return copyFromWeekStart;
+    }
+    return dispatchWeekStarts[0];
+  }, [dispatchWeekStarts, copyFromWeekStart]);
+
+  const copyToWeekOptions = useMemo(() => {
+    if (!effectiveCopyFromWeekStart) return [] as string[];
+
+    const fromDate = parseLocalDate(effectiveCopyFromWeekStart);
     return Array.from({ length: 52 }, (_, index) =>
       localDateIso(addDays(fromDate, (index + 1) * 7))
     ).filter((iso) => iso >= todayWeekStartIso);
-  }, [copyFromWeekStart, todayWeekStartIso]);
+  }, [effectiveCopyFromWeekStart, todayWeekStartIso]);
 
-  useEffect(() => {
-    if (allDispatchScheduleWeeks.length === 0) {
-      setCopyFromWeekStart("");
-      setCopyToWeekStart("");
-      return;
-    }
-
-    const availableStarts = allDispatchScheduleWeeks.map((week) => week.weekStartIso);
-    const nextFrom =
-      copyFromWeekStart && availableStarts.includes(copyFromWeekStart)
-        ? copyFromWeekStart
-        : availableStarts[0];
-
-    const nextTo = localDateIso(addDays(parseLocalDate(nextFrom), 7));
-
-    setCopyFromWeekStart(nextFrom);
-    setCopyToWeekStart((current) => {
-      if (current && current > nextFrom) return current;
-      return nextTo;
-    });
-  }, [allDispatchScheduleWeeks, copyFromWeekStart]);
+  const effectiveCopyToWeekStart = useMemo(() => {
+    if (!effectiveCopyFromWeekStart) return "";
+    if (copyToWeekStart && copyToWeekStart > effectiveCopyFromWeekStart) return copyToWeekStart;
+    return copyToWeekOptions[0] ?? "";
+  }, [effectiveCopyFromWeekStart, copyToWeekStart, copyToWeekOptions]);
 
   const allAvailabilityWeeks = useMemo(
     () => groupItemsIntoWeeks(slots),
     [slots]
   );
 
-  const copyAvailabilityToWeekOptions = useMemo(() => {
-    if (!copyAvailabilityFromWeekStart) return [] as string[];
+  const availabilityWeekStarts = useMemo(() => {
+    if (!selectedDriverId) return [] as string[];
+    return allAvailabilityWeeks.map((week) => week.weekStartIso);
+  }, [allAvailabilityWeeks, selectedDriverId]);
 
-    const fromDate = parseLocalDate(copyAvailabilityFromWeekStart);
+  const effectiveCopyAvailabilityFromWeekStart = useMemo(() => {
+    if (availabilityWeekStarts.length === 0) return "";
+    if (
+      copyAvailabilityFromWeekStart &&
+      availabilityWeekStarts.includes(copyAvailabilityFromWeekStart)
+    ) {
+      return copyAvailabilityFromWeekStart;
+    }
+    return availabilityWeekStarts[0];
+  }, [availabilityWeekStarts, copyAvailabilityFromWeekStart]);
+
+  const copyAvailabilityToWeekOptions = useMemo(() => {
+    if (!effectiveCopyAvailabilityFromWeekStart) return [] as string[];
+
+    const fromDate = parseLocalDate(effectiveCopyAvailabilityFromWeekStart);
     return Array.from({ length: 52 }, (_, index) =>
       localDateIso(addDays(fromDate, (index + 1) * 7))
     ).filter((iso) => iso >= todayWeekStartIso);
-  }, [copyAvailabilityFromWeekStart, todayWeekStartIso]);
+  }, [effectiveCopyAvailabilityFromWeekStart, todayWeekStartIso]);
 
-  useEffect(() => {
-    if (!selectedDriverId || allAvailabilityWeeks.length === 0) {
-      setCopyAvailabilityFromWeekStart("");
-      setCopyAvailabilityToWeekStart("");
-      return;
+  const effectiveCopyAvailabilityToWeekStart = useMemo(() => {
+    if (!effectiveCopyAvailabilityFromWeekStart) return "";
+    if (
+      copyAvailabilityToWeekStart &&
+      copyAvailabilityToWeekStart > effectiveCopyAvailabilityFromWeekStart
+    ) {
+      return copyAvailabilityToWeekStart;
     }
-
-    const availableStarts = allAvailabilityWeeks.map((week) => week.weekStartIso);
-    const nextFrom =
-      copyAvailabilityFromWeekStart && availableStarts.includes(copyAvailabilityFromWeekStart)
-        ? copyAvailabilityFromWeekStart
-        : availableStarts[0];
-
-    const nextTo = localDateIso(addDays(parseLocalDate(nextFrom), 7));
-
-    setCopyAvailabilityFromWeekStart(nextFrom);
-    setCopyAvailabilityToWeekStart((current) => {
-      if (current && current > nextFrom) return current;
-      return nextTo;
-    });
-  }, [allAvailabilityWeeks, selectedDriverId, copyAvailabilityFromWeekStart]);
+    return copyAvailabilityToWeekOptions[0] ?? "";
+  }, [
+    effectiveCopyAvailabilityFromWeekStart,
+    copyAvailabilityToWeekStart,
+    copyAvailabilityToWeekOptions,
+  ]);
 
   const visibleAvailabilityWeeks = useMemo(() => {
     if (existingAvailabilityView === "all") return allAvailabilityWeeks;
@@ -681,23 +687,26 @@ export default function AvailabilityPage() {
     setErrorMessage(null);
     setSuccessMessage(null);
 
+    const sourceWeekStart = effectiveCopyAvailabilityFromWeekStart;
+    const targetWeekStart = effectiveCopyAvailabilityToWeekStart;
+
     if (!selectedDriverId) {
       setErrorMessage("Please select a driver first.");
       return;
     }
 
-    if (!copyAvailabilityFromWeekStart || !copyAvailabilityToWeekStart) {
+    if (!sourceWeekStart || !targetWeekStart) {
       setErrorMessage("Please choose both source and destination weeks.");
       return;
     }
 
-    if (copyAvailabilityToWeekStart <= copyAvailabilityFromWeekStart) {
+    if (targetWeekStart <= sourceWeekStart) {
       setErrorMessage("Destination week must be after the source week.");
       return;
     }
 
     const sourceWeek = allAvailabilityWeeks.find(
-      (week) => week.weekStartIso === copyAvailabilityFromWeekStart
+      (week) => week.weekStartIso === sourceWeekStart
     );
 
     if (!sourceWeek) {
@@ -714,8 +723,8 @@ export default function AvailabilityPage() {
 
     const confirmed = window.confirm(
       `Copy ${sourceItems.length} availability slot${sourceItems.length === 1 ? "" : "s"} from ${formatWeekRangeLabel(
-        copyAvailabilityFromWeekStart
-      )} to ${formatWeekRangeLabel(copyAvailabilityToWeekStart)}?`
+        sourceWeekStart
+      )} to ${formatWeekRangeLabel(targetWeekStart)}?`
     );
 
     if (!confirmed) return;
@@ -723,7 +732,7 @@ export default function AvailabilityPage() {
     setIsCopyingAvailabilityWeek(true);
 
     const targetWeekDates = Array.from({ length: 7 }, (_, dayIndex) =>
-      localDateIso(addDays(parseLocalDate(copyAvailabilityToWeekStart), dayIndex))
+      localDateIso(addDays(parseLocalDate(targetWeekStart), dayIndex))
     );
 
     const { data: existingTargetWeekSlots, error: existingTargetWeekSlotsError } = await supabase
@@ -752,29 +761,39 @@ export default function AvailabilityPage() {
       )
     );
 
-    const rowsToInsert = sourceItems
-      .map((item) => {
-        const sourceDayIndex = sourceWeek.days.findIndex((day) => day.iso === item.service_date);
-        const targetServiceDate = localDateIso(
-          addDays(parseLocalDate(copyAvailabilityToWeekStart), sourceDayIndex >= 0 ? sourceDayIndex : 0)
-        );
-
-        return {
-          driver_id: selectedDriverId,
-          service_date: targetServiceDate,
-          start_time: item.start_time,
-          end_time: item.end_time,
-          availability_type: item.availability_type,
-        };
-      })
-      .filter(
-        (row) =>
-          !existingKeys.has(
-            `${row.service_date}|${normalizeTime(row.start_time)}|${normalizeTime(
-              row.end_time
-            )}|${row.availability_type}`
-          )
+    const rowsToInsert = sourceItems.reduce<
+      {
+        driver_id: string;
+        service_date: string;
+        start_time: string;
+        end_time: string;
+        availability_type: AvailabilityType;
+      }[]
+    >((acc, item) => {
+      const sourceDayIndex = sourceWeek.days.findIndex((day) => day.iso === item.service_date);
+      const targetServiceDate = localDateIso(
+        addDays(parseLocalDate(targetWeekStart), sourceDayIndex >= 0 ? sourceDayIndex : 0)
       );
+
+      const row = {
+        driver_id: selectedDriverId,
+        service_date: targetServiceDate,
+        start_time: item.start_time,
+        end_time: item.end_time,
+        availability_type: item.availability_type,
+      };
+
+      const key = `${row.service_date}|${normalizeTime(row.start_time)}|${normalizeTime(
+        row.end_time
+      )}|${row.availability_type}`;
+
+      // Track keys as we build payload so source-week duplicates are also skipped.
+      if (existingKeys.has(key)) return acc;
+
+      existingKeys.add(key);
+      acc.push(row);
+      return acc;
+    }, []);
 
     if (rowsToInsert.length === 0) {
       setIsCopyingAvailabilityWeek(false);
@@ -962,18 +981,21 @@ export default function AvailabilityPage() {
     setErrorMessage(null);
     setSuccessMessage(null);
 
-    if (!copyFromWeekStart || !copyToWeekStart) {
+    const sourceWeekStart = effectiveCopyFromWeekStart;
+    const targetWeekStart = effectiveCopyToWeekStart;
+
+    if (!sourceWeekStart || !targetWeekStart) {
       setErrorMessage("Please choose both source and destination weeks.");
       return;
     }
 
-    if (copyToWeekStart <= copyFromWeekStart) {
+    if (targetWeekStart <= sourceWeekStart) {
       setErrorMessage("Destination week must be after the source week.");
       return;
     }
 
     const sourceWeek = allDispatchScheduleWeeks.find(
-      (week) => week.weekStartIso === copyFromWeekStart
+      (week) => week.weekStartIso === sourceWeekStart
     );
 
     if (!sourceWeek) {
@@ -990,8 +1012,8 @@ export default function AvailabilityPage() {
 
     const confirmed = window.confirm(
       `Copy ${sourceItems.length} dispatch shift${sourceItems.length === 1 ? "" : "s"} from ${formatWeekRangeLabel(
-        copyFromWeekStart
-      )} to ${formatWeekRangeLabel(copyToWeekStart)}?`
+        sourceWeekStart
+      )} to ${formatWeekRangeLabel(targetWeekStart)}?`
     );
 
     if (!confirmed) return;
@@ -1002,7 +1024,7 @@ export default function AvailabilityPage() {
       sourceItems.map((item) => {
         const sourceDayIndex = sourceWeek.days.findIndex((day) => day.iso === item.service_date);
         const targetServiceDate = localDateIso(
-          addDays(parseLocalDate(copyToWeekStart), sourceDayIndex >= 0 ? sourceDayIndex : 0)
+          addDays(parseLocalDate(targetWeekStart), sourceDayIndex >= 0 ? sourceDayIndex : 0)
         );
 
         return {
@@ -1310,7 +1332,7 @@ export default function AvailabilityPage() {
               <div>
                 <label className="mb-1 block text-sm font-medium">From week</label>
                 <select
-                  value={copyFromWeekStart}
+                  value={effectiveCopyFromWeekStart}
                   onChange={(e) => setCopyFromWeekStart(e.target.value)}
                   className="w-full rounded border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
                 >
@@ -1325,7 +1347,7 @@ export default function AvailabilityPage() {
               <div>
                 <label className="mb-1 block text-sm font-medium">To week</label>
                 <select
-                  value={copyToWeekStart}
+                  value={effectiveCopyToWeekStart}
                   onChange={(e) => setCopyToWeekStart(e.target.value)}
                   className="w-full rounded border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
                 >
@@ -1341,7 +1363,7 @@ export default function AvailabilityPage() {
                 <button
                   type="button"
                   onClick={handleCopyDispatchWeekForward}
-                  disabled={isCopyingDispatchWeek || !copyFromWeekStart || !copyToWeekStart}
+                  disabled={isCopyingDispatchWeek || !effectiveCopyFromWeekStart || !effectiveCopyToWeekStart}
                   className="w-full rounded bg-amber-600 px-3 py-2 text-sm font-medium text-white hover:bg-amber-700 disabled:opacity-50"
                 >
                   {isCopyingDispatchWeek ? "Copying..." : "Copy Forward"}
@@ -1740,7 +1762,7 @@ export default function AvailabilityPage() {
                 {selectedDriverId && allAvailabilityWeeks.length > 0 ? (
                   <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr,1fr,auto] sm:items-end">
                     <select
-                      value={copyAvailabilityFromWeekStart}
+                      value={effectiveCopyAvailabilityFromWeekStart}
                       onChange={(e) => setCopyAvailabilityFromWeekStart(e.target.value)}
                       className="w-full rounded border border-zinc-300 bg-white px-2 py-1 text-xs text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
                     >
@@ -1752,7 +1774,7 @@ export default function AvailabilityPage() {
                     </select>
 
                     <select
-                      value={copyAvailabilityToWeekStart}
+                      value={effectiveCopyAvailabilityToWeekStart}
                       onChange={(e) => setCopyAvailabilityToWeekStart(e.target.value)}
                       className="w-full rounded border border-zinc-300 bg-white px-2 py-1 text-xs text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
                     >
@@ -1768,8 +1790,8 @@ export default function AvailabilityPage() {
                       onClick={handleCopyAvailabilityWeekForward}
                       disabled={
                         isCopyingAvailabilityWeek ||
-                        !copyAvailabilityFromWeekStart ||
-                        !copyAvailabilityToWeekStart
+                        !effectiveCopyAvailabilityFromWeekStart ||
+                        !effectiveCopyAvailabilityToWeekStart
                       }
                       className="rounded bg-amber-600 px-3 py-1 text-xs font-medium text-white hover:bg-amber-700 disabled:opacity-50"
                     >

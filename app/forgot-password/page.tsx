@@ -1,22 +1,19 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { supabase } from "@/lib/supabase";
 
 export default function ForgotPasswordPage() {
-  const [nextPath, setNextPath] = useState("/login");
+  const [nextPath] = useState(() => {
+    if (typeof window === "undefined") return "/login";
+    const params = new URLSearchParams(window.location.search);
+    return params.get("next") || "/login";
+  });
   const [email, setEmail] = useState("");
   const [message, setMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const params = new URLSearchParams(window.location.search);
-    const next = params.get("next");
-    if (next) setNextPath(next);
-  }, []);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();

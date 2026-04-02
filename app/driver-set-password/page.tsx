@@ -4,12 +4,6 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 
-type DriverRow = {
-  id: string;
-  email: string | null;
-  approval_status: "pending" | "approved" | "blocked";
-};
-
 export default function DriverSetPasswordPage() {
   const router = useRouter();
 

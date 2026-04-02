@@ -253,9 +253,9 @@ export default function WeeklyPage() {
   const [newDriverVehicle, setNewDriverVehicle] = useState("");
   const [isAddingDriver, setIsAddingDriver] = useState(false);
 
-  const today = new Date();
-  const todayIso = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(
-    today.getDate()
+  const now = new Date();
+  const todayIso = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(
+    now.getDate()
   ).padStart(2, "0")}`;
 
   const weekDays = useMemo(() => {
@@ -273,7 +273,8 @@ export default function WeeklyPage() {
   }, [viewMode, selectedDay, slots, todayIso]);
 
   const activeNowDriverIds = useMemo(() => {
-    const nowMinutes = today.getHours() * 60 + today.getMinutes();
+    const current = new Date();
+    const nowMinutes = current.getHours() * 60 + current.getMinutes();
     return new Set(
       slots
         .filter(
@@ -284,7 +285,7 @@ export default function WeeklyPage() {
         )
         .map((slot) => slot.driver_id)
     );
-  }, [slots, todayIso, today]);
+  }, [slots, todayIso]);
 
   const todayDriverIds = useMemo(() => {
     return new Set(
@@ -301,10 +302,22 @@ export default function WeeklyPage() {
     );
   }, [slots, selectedDay, viewMode]);
 
+  const unavailableDriverIds = useMemo(() => {
+    return new Set(
+      slots
+        .filter((slot) => slot.availability_type === "unavailable")
+        .map((slot) => slot.driver_id)
+    );
+  }, [slots]);
+
   const sortedDrivers = useMemo(() => {
     const getFirstName = (name: string) => name.split(" ")[0]?.toLowerCase() ?? "";
 
     return [...drivers].sort((a, b) => {
+      const aUnavailable = unavailableDriverIds.has(a.id);
+      const bUnavailable = unavailableDriverIds.has(b.id);
+      if (aUnavailable !== bUnavailable) return aUnavailable ? 1 : -1;
+
       if (viewMode === "day") {
         const aHasSelectedDaySlot = selectedDayDriverIds.has(a.id);
         const bHasSelectedDaySlot = selectedDayDriverIds.has(b.id);
@@ -331,7 +344,7 @@ export default function WeeklyPage() {
       const bFirst = getFirstName(b.full_name);
       return aFirst.localeCompare(bFirst);
     });
-  }, [drivers, activeNowDriverIds, todayDriverIds, viewMode, selectedDayDriverIds]);
+  }, [drivers, unavailableDriverIds, activeNowDriverIds, todayDriverIds, viewMode, selectedDayDriverIds]);
 
   useEffect(() => {
     async function checkAccess() {
@@ -422,7 +435,9 @@ export default function WeeklyPage() {
   useEffect(() => {
     if (!authChecked) return;
 
-    loadData();
+    const loadTimer = window.setTimeout(() => {
+      void loadData();
+    }, 0);
 
     const channel = supabase
       .channel("weekly_board_changes")
@@ -439,6 +454,7 @@ export default function WeeklyPage() {
       .subscribe();
 
     return () => {
+      window.clearTimeout(loadTimer);
       supabase.removeChannel(channel);
     };
   }, [authChecked, loadData]);

@@ -8,7 +8,11 @@ import { supabase } from "@/lib/supabase";
 export default function ResetPasswordPage() {
   const router = useRouter();
 
-  const [nextPath, setNextPath] = useState("/login");
+  const [nextPath] = useState(() => {
+    if (typeof window === "undefined") return "/login";
+    const params = new URLSearchParams(window.location.search);
+    return params.get("next") || "/login";
+  });
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [message, setMessage] = useState<string | null>(null);
@@ -17,12 +21,6 @@ export default function ResetPasswordPage() {
   const [isReady, setIsReady] = useState(false);
 
   useEffect(() => {
-    if (typeof window !== "undefined") {
-      const params = new URLSearchParams(window.location.search);
-      const next = params.get("next");
-      if (next) setNextPath(next);
-    }
-
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((event) => {
