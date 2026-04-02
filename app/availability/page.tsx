@@ -102,6 +102,10 @@ function formatTime(value: string) {
   return `${hour12}:${minutes.toString().padStart(2, "0")} ${suffix}`;
 }
 
+function normalizeTime(value: string) {
+  return value.slice(0, 5);
+}
+
 function getDateRange(start: string, end: string) {
   const dates: string[] = [];
   const current = parseLocalDate(start);
@@ -585,17 +589,57 @@ export default function AvailabilityPage() {
     const selectedDates =
       dateMode === "single" ? [serviceDate] : getDateRange(rangeStartDate, rangeEndDate);
 
+    const targetStartTime =
+      availabilityType === "unavailable" && allDayUnavailable ? "00:00" : startTime;
+    const targetEndTime =
+      availabilityType === "unavailable" && allDayUnavailable ? "00:00" : endTime;
+
     setIsSaving(true);
 
-    const { error } = await supabase.from("availability_slots").insert(
-      selectedDates.map((date) => ({
+    const { data: existingSlots, error: existingSlotsError } = await supabase
+      .from("availability_slots")
+      .select("service_date, start_time, end_time, availability_type")
+      .eq("driver_id", selectedDriverId)
+      .in("service_date", selectedDates)
+      .eq("availability_type", availabilityType);
+
+    if (existingSlotsError) {
+      setIsSaving(false);
+      setErrorMessage(existingSlotsError.message);
+      return;
+    }
+
+    const existingKeys = new Set(
+      ((existingSlots ?? []) as Pick<AvailabilitySlot, "service_date" | "start_time" | "end_time" | "availability_type">[]).map(
+        (slot) =>
+          `${slot.service_date}|${normalizeTime(slot.start_time)}|${normalizeTime(
+            slot.end_time
+          )}|${slot.availability_type}`
+      )
+    );
+
+    const rowsToInsert = selectedDates
+      .filter(
+        (date) =>
+          !existingKeys.has(
+            `${date}|${normalizeTime(targetStartTime)}|${normalizeTime(targetEndTime)}|${availabilityType}`
+          )
+      )
+      .map((date) => ({
         driver_id: selectedDriverId,
         service_date: date,
-        start_time: availabilityType === "unavailable" && allDayUnavailable ? "00:00" : startTime,
-        end_time: availabilityType === "unavailable" && allDayUnavailable ? "00:00" : endTime,
+        start_time: targetStartTime,
+        end_time: targetEndTime,
         availability_type: availabilityType,
-      }))
-    );
+      }));
+
+    if (rowsToInsert.length === 0) {
+      setIsSaving(false);
+      setSuccessMessage("No new availability was saved because matching entries already exist.");
+      return;
+    }
+
+    const { error } = await supabase.from("availability_slots").insert(rowsToInsert);
 
     setIsSaving(false);
 
@@ -605,10 +649,15 @@ export default function AvailabilityPage() {
     }
 
     setAvailabilityType("available");
+    const duplicatesSkipped = selectedDates.length - rowsToInsert.length;
     setSuccessMessage(
       `${availabilityType === "unavailable" ? "Unavailable" : "Availability"} saved for ${
-        selectedDates.length
-      } date${selectedDates.length === 1 ? "" : "s"}.`
+        rowsToInsert.length
+      } date${rowsToInsert.length === 1 ? "" : "s"}.${
+        duplicatesSkipped > 0
+          ? ` Skipped ${duplicatesSkipped} duplicate${duplicatesSkipped === 1 ? "" : "s"}.`
+          : ""
+      }`
     );
     await refreshAllData(selectedDriverId);
   }
@@ -673,8 +722,38 @@ export default function AvailabilityPage() {
 
     setIsCopyingAvailabilityWeek(true);
 
-    const { error } = await supabase.from("availability_slots").insert(
-      sourceItems.map((item) => {
+    const targetWeekDates = Array.from({ length: 7 }, (_, dayIndex) =>
+      localDateIso(addDays(parseLocalDate(copyAvailabilityToWeekStart), dayIndex))
+    );
+
+    const { data: existingTargetWeekSlots, error: existingTargetWeekSlotsError } = await supabase
+      .from("availability_slots")
+      .select("service_date, start_time, end_time, availability_type")
+      .eq("driver_id", selectedDriverId)
+      .in("service_date", targetWeekDates);
+
+    if (existingTargetWeekSlotsError) {
+      setIsCopyingAvailabilityWeek(false);
+      setErrorMessage(existingTargetWeekSlotsError.message);
+      return;
+    }
+
+    const existingKeys = new Set(
+      (
+        (existingTargetWeekSlots ?? []) as Pick<
+          AvailabilitySlot,
+          "service_date" | "start_time" | "end_time" | "availability_type"
+        >[]
+      ).map(
+        (slot) =>
+          `${slot.service_date}|${normalizeTime(slot.start_time)}|${normalizeTime(
+            slot.end_time
+          )}|${slot.availability_type}`
+      )
+    );
+
+    const rowsToInsert = sourceItems
+      .map((item) => {
         const sourceDayIndex = sourceWeek.days.findIndex((day) => day.iso === item.service_date);
         const targetServiceDate = localDateIso(
           addDays(parseLocalDate(copyAvailabilityToWeekStart), sourceDayIndex >= 0 ? sourceDayIndex : 0)
@@ -688,7 +767,22 @@ export default function AvailabilityPage() {
           availability_type: item.availability_type,
         };
       })
-    );
+      .filter(
+        (row) =>
+          !existingKeys.has(
+            `${row.service_date}|${normalizeTime(row.start_time)}|${normalizeTime(
+              row.end_time
+            )}|${row.availability_type}`
+          )
+      );
+
+    if (rowsToInsert.length === 0) {
+      setIsCopyingAvailabilityWeek(false);
+      setSuccessMessage("No new availability was copied because matching entries already exist.");
+      return;
+    }
+
+    const { error } = await supabase.from("availability_slots").insert(rowsToInsert);
 
     setIsCopyingAvailabilityWeek(false);
 
@@ -697,7 +791,14 @@ export default function AvailabilityPage() {
       return;
     }
 
-    setSuccessMessage("Availability week copied forward.");
+    const duplicatesSkipped = sourceItems.length - rowsToInsert.length;
+    setSuccessMessage(
+      `Availability week copied forward.${
+        duplicatesSkipped > 0
+          ? ` Skipped ${duplicatesSkipped} duplicate${duplicatesSkipped === 1 ? "" : "s"}.`
+          : ""
+      }`
+    );
     await refreshAllData(selectedDriverId);
   }
 

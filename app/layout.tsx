@@ -15,6 +15,9 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "Accell Driver Availability",
   description: "Accell Driver Availability schedule and dispatch dashboard",
+  icons: {
+    icon: "/favicon.ico",
+  },
 };
 
 export default function RootLayout({
