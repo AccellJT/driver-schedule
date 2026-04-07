@@ -305,10 +305,12 @@ export default function WeeklyPage() {
   const unavailableDriverIds = useMemo(() => {
     return new Set(
       slots
-        .filter((slot) => slot.availability_type === "unavailable")
+        .filter(
+          (slot) => slot.service_date === todayIso && slot.availability_type === "unavailable"
+        )
         .map((slot) => slot.driver_id)
     );
-  }, [slots]);
+  }, [slots, todayIso]);
 
   const sortedDrivers = useMemo(() => {
     const getFirstName = (name: string) => name.split(" ")[0]?.toLowerCase() ?? "";
