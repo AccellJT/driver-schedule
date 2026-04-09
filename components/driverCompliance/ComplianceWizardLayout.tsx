@@ -74,9 +74,15 @@ export function ComplianceWizardLayout({
     return JSON.stringify(normalizeAnswers(submission.answers)) !== JSON.stringify(draftAnswers);
   }, [draftAnswers, submission.answers]);
 
+  const attestationAnswers = draftAnswers.attestation ?? {};
   const attestationAccepted = Boolean(
-    draftAnswers.attestation?.truth_certification &&
-      draftAnswers.attestation?.policy_acknowledgement
+    attestationAnswers.answers_truthful_and_complete === true &&
+      attestationAnswers.responsible_for_own_taxes === true &&
+      attestationAnswers.responsible_for_own_business_expenses_attestation === true &&
+      attestationAnswers.may_accept_or_decline_work === true &&
+      attestationAnswers.attestation_does_not_guarantee_work === true &&
+      typeof attestationAnswers.electronic_signature === "string" &&
+      attestationAnswers.electronic_signature.trim().length > 0
   );
 
   const isOwnDriver = viewer.role === "driver" && viewer.driverId === driverId;
