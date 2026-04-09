@@ -55,6 +55,7 @@ export const complianceBlockingFlagCodes = [
   "insurance_not_maintained",
   "truthfulness_not_certified",
   "signature_missing",
+  "independent_contractor_agreement_not_signed",
 ] as const;
 
 export type ComplianceBlockingFlagCode =

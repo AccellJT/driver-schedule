@@ -6,6 +6,8 @@ export * from "./complianceAuditService";
 export * from "./eligibilityService";
 export * from "./expirationService";
 export * from "./flagService";
+export * from "./reviewerAidConfig";
+export * from "./reviewerAidService";
 export * from "./scoringRules.v1";
 export * from "./scoringService";
 export * from "./sectionProgress";

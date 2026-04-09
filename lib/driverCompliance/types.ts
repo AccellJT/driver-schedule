@@ -27,6 +27,22 @@ export type ComplianceSectionKey =
 
 export type ComplianceFlagSeverity = "low" | "medium" | "high";
 
+export type ComplianceReviewerSeverity = ComplianceFlagSeverity | "blocking";
+
+export type ComplianceReviewerAutoResponseCategory =
+  | "accepted_preferred"
+  | "accepted_but_review"
+  | "requires_clarification"
+  | "missing_documentation"
+  | "blocking_misalignment";
+
+export type CompliancePreferredAnswer = "yes" | "no" | "completed";
+
+export type ComplianceSuggestedDecision =
+  | "approve"
+  | "request_changes"
+  | "request_changes_or_reject";
+
 export type ComplianceQuestionType =
   | "yes_no"
   | "text"
@@ -69,6 +85,43 @@ export interface ComplianceQuestion {
   weight?: number;
   riskIf?: ComplianceRiskIf[];
   options?: ComplianceQuestionOption[];
+}
+
+export interface ComplianceReviewerQuestionConfig {
+  preferredAnswer: CompliancePreferredAnswer;
+  mismatchSeverity: ComplianceReviewerSeverity;
+  mismatchCategory: Exclude<ComplianceReviewerAutoResponseCategory, "accepted_preferred">;
+  cannedReviewerNote: string;
+}
+
+export interface ComplianceQuestionEvaluationResult {
+  questionId: string;
+  sectionKey: ComplianceSectionKey;
+  questionNumber: number | null;
+  questionLabel: string;
+  preferredAnswer: CompliancePreferredAnswer;
+  preferredAnswerLabel: string;
+  actualAnswer: ComplianceAnswerValue | undefined;
+  actualAnswerLabel: string;
+  matchesPreferredAnswer: boolean;
+  severity: ComplianceReviewerSeverity | null;
+  autoResponseCategory: ComplianceReviewerAutoResponseCategory;
+  cannedReviewerNote: string | null;
+}
+
+export interface ComplianceReviewerAidSummary {
+  evaluations: ComplianceQuestionEvaluationResult[];
+  mismatches: ComplianceQuestionEvaluationResult[];
+  cannedReviewerNotes: string[];
+  compiledReviewerNote: string;
+  mismatchCount: number;
+  blockingMismatchCount: number;
+  highMismatchCount: number;
+  mediumMismatchCount: number;
+  lowMismatchCount: number;
+  suggestedDecision: ComplianceSuggestedDecision;
+  suggestedDecisionLabel: string;
+  recommendationSummary: string;
 }
 
 export interface ComplianceSection {

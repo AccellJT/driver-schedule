@@ -78,6 +78,25 @@ export const driverComplianceSurveySchema: ComplianceSection[] = [
         ],
       },
       {
+        id: "signed_independent_contractor_agreement",
+        key: "signed_independent_contractor_agreement",
+        section: "identity",
+        prompt: "Have you signed the Independent Contractor Agreement with Accell?",
+        label: "Have you signed the Independent Contractor Agreement with Accell?",
+        required: true,
+        type: "yes_no",
+        description: "Answer yes only if your Independent Contractor Agreement with Accell has been signed.",
+        weight: 5,
+        riskIf: [
+          {
+            equals: false,
+            severity: "high",
+            code: "independent_contractor_agreement_not_signed",
+            message: "The driver has not signed the Independent Contractor Agreement with Accell.",
+          },
+        ],
+      },
+      {
         id: "maintains_license_and_vehicle_docs",
         key: "maintains_license_and_vehicle_docs",
         section: "identity",
