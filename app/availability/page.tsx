@@ -1104,6 +1104,13 @@ export default function AvailabilityPage() {
         >
           Availability
         </button>
+        <button
+          type="button"
+          onClick={() => router.push("/compliance")}
+          className="rounded bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700"
+        >
+          Driver Compliance
+        </button>
       </div>
 
       {errorMessage && (

@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import { ComplianceCompactStatus } from "@/components/driverCompliance/ComplianceCompactStatus";
+import type { ComplianceStatus, EligibilityStatus } from "@/lib/driverCompliance";
 import { supabase } from "@/lib/supabase";
 
 type DriverApprovalStatus = "pending" | "approved" | "blocked";
@@ -12,7 +14,17 @@ type Driver = {
   full_name: string;
   vehicle_label: string | null;
   approval_status: DriverApprovalStatus;
+  compliance_status?: ComplianceStatus | null;
+  compliance_eligibility_status?: EligibilityStatus | null;
+  compliance_expires_at?: string | null;
   email?: string | null;
+};
+
+type WeeklyComplianceSummaryRow = {
+  driver_id: string;
+  compliance_status: ComplianceStatus | null;
+  eligibility_status: EligibilityStatus | null;
+  expires_at: string | null;
 };
 
 type AvailabilitySlot = {
@@ -405,6 +417,7 @@ export default function WeeklyPage() {
     const [
       { data: driverData, error: driverError },
       { data: slotData, error: slotError },
+      { data: complianceSummaryData, error: complianceSummaryError },
     ] = await Promise.all([
       supabase
         .from("drivers")
@@ -418,6 +431,7 @@ export default function WeeklyPage() {
         .lte("service_date", rangeEnd)
         .order("service_date")
         .order("start_time"),
+      supabase.rpc("get_driver_compliance_summary_for_staff"),
     ]);
 
     if (driverError) {
@@ -430,7 +444,29 @@ export default function WeeklyPage() {
       return;
     }
 
-    setDrivers((driverData ?? []) as Driver[]);
+    if (complianceSummaryError) {
+      console.warn("Weekly compliance summary unavailable:", complianceSummaryError.message);
+    }
+
+    const complianceByDriverId = new Map(
+      (((complianceSummaryData ?? []) as WeeklyComplianceSummaryRow[]) || []).map((row) => [
+        row.driver_id,
+        row,
+      ])
+    );
+
+    const mergedDrivers = ((driverData ?? []) as Driver[]).map((driver) => {
+      const summary = complianceByDriverId.get(driver.id);
+
+      return {
+        ...driver,
+        compliance_status: summary?.compliance_status ?? null,
+        compliance_eligibility_status: summary?.eligibility_status ?? null,
+        compliance_expires_at: summary?.expires_at ?? null,
+      };
+    });
+
+    setDrivers(mergedDrivers);
     setSlots((slotData ?? []) as AvailabilitySlot[]);
   }, [viewMode, selectedDay]);
 
@@ -858,8 +894,14 @@ export default function WeeklyPage() {
                     )}
                   </div>
 
-                  <div className="ml-auto w-fit text-right text-xs text-gray-500">
-                    {driver.vehicle_label}
+                  <div className="ml-auto mt-0.5 flex w-fit flex-wrap items-center justify-end gap-1 text-right text-xs text-gray-500">
+                    {driver.vehicle_label && <span>{driver.vehicle_label}</span>}
+                    <ComplianceCompactStatus
+                      status={driver.compliance_status}
+                      eligibilityStatus={driver.compliance_eligibility_status}
+                      expiresAt={driver.compliance_expires_at}
+                      href={currentRole === "admin" ? `/compliance/${driver.id}` : undefined}
+                    />
                   </div>
                 </td>
 
