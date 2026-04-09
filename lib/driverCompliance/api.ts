@@ -2,6 +2,14 @@ import { supabase } from "@/lib/supabase";
 import { isAnswerPresent, normalizeAnswers } from "./answerHelpers";
 import { buildComplianceAuditTrail } from "./complianceAuditService";
 import {
+  buildDefaultComplianceDocumentTracking,
+  countActiveComplianceDocumentAlerts,
+  countConfirmedComplianceDocuments,
+  getComplianceDocumentAlerts,
+  normalizeComplianceDocumentTracking,
+  parseComplianceDocumentTracking,
+} from "./documentTrackingService";
+import {
   calculateComplianceExpirationDate,
   getComplianceExpirationInfo,
   isComplianceExpired,
@@ -28,6 +36,7 @@ import type {
   ComplianceViewerAccess,
   DriverComplianceSummary,
   EligibilityStatus,
+  ComplianceDocumentTracking,
 } from "./types";
 
 type DriverRow = {
@@ -52,6 +61,7 @@ type ProfileRow = {
   reviewed_at: string | null;
   approved_at: string | null;
   expires_at: string | null;
+  document_tracking: unknown;
   updated_at: string;
 };
 
@@ -560,7 +570,15 @@ function mapSubmissionToViewModel({
   };
 }
 
-function toDashboardRow(submission: ComplianceSubmission): DriverComplianceSummary {
+function toDashboardRow({
+  submission,
+  documentTracking,
+}: {
+  submission: ComplianceSubmission;
+  documentTracking: ComplianceDocumentTracking;
+}): DriverComplianceSummary {
+  const documentAlerts = getComplianceDocumentAlerts(documentTracking);
+
   return {
     driverId: submission.driverId,
     driverName: submission.driverName,
@@ -571,6 +589,10 @@ function toDashboardRow(submission: ComplianceSubmission): DriverComplianceSumma
     flagCount: submission.flags.length,
     highRiskFlagCount: submission.flags.filter((flag) => flag.severity === "high").length,
     lastUpdatedAt: submission.lastUpdatedAt,
+    documentTracking,
+    documentAlerts,
+    documentAlertCount: countActiveComplianceDocumentAlerts(documentAlerts),
+    gustoConfirmedCount: countConfirmedComplianceDocuments(documentTracking),
   };
 }
 
@@ -609,7 +631,7 @@ export async function getComplianceDashboardData(): Promise<ComplianceDashboardD
     .order("full_name", { ascending: true });
 
   let profilesQuery = supabase.from("driver_compliance_profiles").select(
-    "id, driver_id, current_submission_id, compliance_status, eligibility_status, current_score, risk_flags, missing_requirements, submitted_at, reviewed_at, approved_at, expires_at, updated_at"
+    "id, driver_id, current_submission_id, compliance_status, eligibility_status, current_score, risk_flags, missing_requirements, submitted_at, reviewed_at, approved_at, expires_at, document_tracking, updated_at"
   );
 
   if (!context.isAdmin && context.driverId) {
@@ -653,12 +675,24 @@ export async function getComplianceDashboardData(): Promise<ComplianceDashboardD
       const profile = profileByDriverId.get(driver.id) ?? null;
       const submission = latestSubmissionByDriverId.get(driver.id) ?? null;
 
-      return toDashboardRow(mapSubmissionToViewModel({ driver, profile, submission }));
+      const documentTracking = context.isAdmin
+        ? parseComplianceDocumentTracking(profile?.document_tracking)
+        : buildDefaultComplianceDocumentTracking();
+
+      return toDashboardRow({
+        submission: mapSubmissionToViewModel({ driver, profile, submission }),
+        documentTracking,
+      });
     })
     .sort((a, b) => {
       if (b.highRiskFlagCount !== a.highRiskFlagCount) {
         return b.highRiskFlagCount - a.highRiskFlagCount;
       }
+
+      if (b.documentAlertCount !== a.documentAlertCount) {
+        return b.documentAlertCount - a.documentAlertCount;
+      }
+
       return b.lastUpdatedAt.localeCompare(a.lastUpdatedAt);
     });
 
@@ -956,7 +990,7 @@ export async function getComplianceSubmissionByDriverId(
     supabase
       .from("driver_compliance_profiles")
       .select(
-        "id, driver_id, current_submission_id, compliance_status, eligibility_status, current_score, risk_flags, missing_requirements, submitted_at, reviewed_at, approved_at, expires_at, updated_at"
+        "id, driver_id, current_submission_id, compliance_status, eligibility_status, current_score, risk_flags, missing_requirements, submitted_at, reviewed_at, approved_at, expires_at, document_tracking, updated_at"
       )
       .eq("driver_id", driverId)
       .maybeSingle(),
@@ -1019,7 +1053,7 @@ export async function reviewComplianceSubmission({
   const profileResult = await supabase
     .from("driver_compliance_profiles")
     .select(
-      "id, driver_id, current_submission_id, compliance_status, eligibility_status, current_score, risk_flags, missing_requirements, submitted_at, reviewed_at, approved_at, expires_at, updated_at"
+      "id, driver_id, current_submission_id, compliance_status, eligibility_status, current_score, risk_flags, missing_requirements, submitted_at, reviewed_at, approved_at, expires_at, document_tracking, updated_at"
     )
     .eq("driver_id", driverId)
     .maybeSingle();
@@ -1131,6 +1165,93 @@ export async function submitComplianceReviewDecision(args: {
   return reviewComplianceSubmission(args);
 }
 
+export async function updateComplianceDocumentTracking({
+  driverId,
+  tracking,
+}: {
+  driverId: string;
+  tracking: ComplianceDocumentTracking;
+}): Promise<ComplianceReviewData> {
+  const context = await getComplianceAccessContext();
+  assertCanReviewCompliance(context);
+
+  const [profileResult, submissionRow] = await Promise.all([
+    supabase
+      .from("driver_compliance_profiles")
+      .select(
+        "id, driver_id, current_submission_id, compliance_status, eligibility_status, current_score, risk_flags, missing_requirements, submitted_at, reviewed_at, approved_at, expires_at, document_tracking, updated_at"
+      )
+      .eq("driver_id", driverId)
+      .maybeSingle(),
+    getLatestSubmittedSubmissionRow(driverId),
+  ]);
+
+  if (profileResult.error) {
+    throw new Error(profileResult.error.message);
+  }
+
+  if (!submissionRow?.submitted_at) {
+    throw new Error(
+      "A submitted compliance packet is required before Gusto document tracking can be updated."
+    );
+  }
+
+  const profile = (profileResult.data ?? null) as ProfileRow | null;
+  const submissionView = mapSubmissionToViewModel({
+    driver: null,
+    profile,
+    submission: submissionRow,
+    preferProfileState: profile?.current_submission_id === submissionRow.id,
+  });
+
+  const nowIso = new Date().toISOString();
+  const normalizedTracking = normalizeComplianceDocumentTracking({
+    ...tracking,
+    updatedAt: nowIso,
+  });
+
+  const { error: updateError } = await supabase.from("driver_compliance_profiles").upsert(
+    {
+      driver_id: driverId,
+      current_submission_id: profile?.current_submission_id ?? submissionRow.id,
+      compliance_status: submissionView.status,
+      eligibility_status: submissionView.eligibilityStatus,
+      current_score: submissionView.score,
+      risk_flags: submissionView.flags,
+      missing_requirements: getMissingRequirements(submissionView.answers),
+      submitted_at: submissionView.submittedAt,
+      reviewed_at: profile?.reviewed_at ?? null,
+      approved_at: profile?.approved_at ?? null,
+      expires_at: submissionView.expiresAt,
+      last_actor_profile_id: context.userId,
+      document_tracking: normalizedTracking,
+    },
+    { onConflict: "driver_id" }
+  );
+
+  if (updateError) {
+    throw new Error(updateError.message);
+  }
+
+  const { error: auditError } = await supabase.from("driver_compliance_audit_log").insert({
+    driver_id: driverId,
+    compliance_profile_id: profile?.id ?? null,
+    submission_id: submissionRow.id,
+    actor_profile_id: context.userId,
+    event_type: "documents.gusto_tracking_updated",
+    compliance_status: submissionView.status,
+    eligibility_status: submissionView.eligibilityStatus,
+    note: "Admin updated the Gusto document checklist and expiration dates.",
+    event_metadata: normalizedTracking,
+  });
+
+  if (auditError) {
+    throw new Error(auditError.message);
+  }
+
+  return getComplianceReviewData(driverId);
+}
+
 export async function getComplianceReviewData(
   driverId: string
 ): Promise<ComplianceReviewData> {
@@ -1146,7 +1267,7 @@ export async function getComplianceReviewData(
     supabase
       .from("driver_compliance_profiles")
       .select(
-        "id, driver_id, current_submission_id, compliance_status, eligibility_status, current_score, risk_flags, missing_requirements, submitted_at, reviewed_at, approved_at, expires_at, updated_at"
+        "id, driver_id, current_submission_id, compliance_status, eligibility_status, current_score, risk_flags, missing_requirements, submitted_at, reviewed_at, approved_at, expires_at, document_tracking, updated_at"
       )
       .eq("driver_id", driverId)
       .maybeSingle(),
@@ -1200,9 +1321,15 @@ export async function getComplianceReviewData(
       ? toAuditEntries((auditRows ?? []) as AuditLogRow[], actorNameMap)
       : buildComplianceAuditTrail(submission);
 
+  const documentTracking = parseComplianceDocumentTracking(
+    ((profileResult.data ?? null) as ProfileRow | null)?.document_tracking
+  );
+
   return {
     submission,
     auditEntries,
+    documentTracking,
+    documentAlerts: getComplianceDocumentAlerts(documentTracking),
   };
 }
 

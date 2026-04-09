@@ -124,6 +124,31 @@ export interface ComplianceReviewerAidSummary {
   recommendationSummary: string;
 }
 
+export interface ComplianceDocumentTracking {
+  w9SavedToGusto: boolean;
+  contractSavedToGusto: boolean;
+  insuranceSavedToGusto: boolean;
+  insuranceExpiresOn: string | null;
+  driversLicenseSavedToGusto: boolean;
+  driversLicenseExpiresOn: string | null;
+  updatedAt: string | null;
+}
+
+export type ComplianceDocumentAlertStatus =
+  | "current"
+  | "due_soon"
+  | "expired"
+  | "missing";
+
+export interface ComplianceDocumentAlert {
+  key: "insurance" | "drivers_license";
+  label: string;
+  status: ComplianceDocumentAlertStatus;
+  expiresOn: string | null;
+  daysUntilDue: number | null;
+  message: string;
+}
+
 export interface ComplianceSection {
   key: ComplianceSectionKey;
   title: string;
@@ -196,6 +221,10 @@ export interface DriverComplianceSummary {
   flagCount: number;
   highRiskFlagCount: number;
   lastUpdatedAt: string;
+  documentTracking: ComplianceDocumentTracking;
+  documentAlerts: ComplianceDocumentAlert[];
+  documentAlertCount: number;
+  gustoConfirmedCount: number;
 }
 
 export type ComplianceDashboardRow = DriverComplianceSummary;
@@ -237,6 +266,8 @@ export interface ComplianceExpirationInfo {
 export interface ComplianceReviewData {
   submission: ComplianceSubmission;
   auditEntries: ComplianceAuditEntry[];
+  documentTracking: ComplianceDocumentTracking;
+  documentAlerts: ComplianceDocumentAlert[];
 }
 
 export interface ComplianceCompletionData {

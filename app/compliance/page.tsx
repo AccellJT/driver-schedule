@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { ComplianceDocumentStatusSummary } from "@/components/driverCompliance/ComplianceDocumentStatusSummary";
 import { ComplianceStatusBadge } from "@/components/driverCompliance/ComplianceStatusBadge";
 
 function formatSummaryDate(value: string | null) {
@@ -66,8 +67,10 @@ export default function ComplianceDashboardPage() {
     ? "Back to dispatcher page"
     : "Back to driver availability page";
 
-  const followUpCount = (dashboard?.rows ?? []).filter((row) =>
-    ["review_required", "blocked", "expired", "conditionally_approved"].includes(row.status)
+  const followUpCount = (dashboard?.rows ?? []).filter(
+    (row) =>
+      ["review_required", "blocked", "expired", "conditionally_approved"].includes(row.status) ||
+      row.documentAlertCount > 0
   ).length;
 
   const filteredRows = (() => {
@@ -79,10 +82,11 @@ export default function ComplianceDashboardPage() {
       case "flags":
         return rows.filter((row) => row.flagCount > 0);
       case "follow-up":
-        return rows.filter((row) =>
-          ["review_required", "blocked", "expired", "conditionally_approved"].includes(
-            row.status
-          )
+        return rows.filter(
+          (row) =>
+            ["review_required", "blocked", "expired", "conditionally_approved"].includes(
+              row.status
+            ) || row.documentAlertCount > 0
         );
       case "all":
       default:
@@ -258,6 +262,9 @@ export default function ComplianceDashboardPage() {
                           Flags
                         </th>
                         <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-zinc-500">
+                          Docs / Gusto
+                        </th>
+                        <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-zinc-500">
                           Actions
                         </th>
                       </tr>
@@ -285,6 +292,12 @@ export default function ComplianceDashboardPage() {
                             {row.highRiskFlagCount > 0 ? ` (${row.highRiskFlagCount} high)` : ""}
                           </td>
                           <td className="px-4 py-3 text-sm">
+                            <ComplianceDocumentStatusSummary
+                              tracking={row.documentTracking}
+                              alerts={row.documentAlerts}
+                            />
+                          </td>
+                          <td className="px-4 py-3 text-sm">
                             <div className="flex flex-wrap gap-2">
                               <Link
                                 href={`/compliance/${row.driverId}/review`}
@@ -306,7 +319,7 @@ export default function ComplianceDashboardPage() {
                       {filteredRows.length === 0 && (
                         <tr>
                           <td
-                            colSpan={6}
+                            colSpan={7}
                             className="px-4 py-6 text-sm text-zinc-600 dark:text-zinc-300"
                           >
                             No compliance rows are available yet for this account.

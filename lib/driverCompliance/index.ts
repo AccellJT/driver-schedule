@@ -3,6 +3,7 @@ export * from "./surveySchema.v1";
 export * from "./answerHelpers";
 export * from "./api";
 export * from "./complianceAuditService";
+export * from "./documentTrackingService";
 export * from "./eligibilityService";
 export * from "./expirationService";
 export * from "./flagService";

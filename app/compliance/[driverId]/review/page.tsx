@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { use, useEffect, useMemo, useState } from "react";
 import { AdminDecisionPanel } from "@/components/driverCompliance/AdminDecisionPanel";
+import { ComplianceDocumentTrackingPanel } from "@/components/driverCompliance/ComplianceDocumentTrackingPanel";
 import { ComplianceRecordNav } from "@/components/driverCompliance/ComplianceRecordNav";
 import { ComplianceStatusBadge } from "@/components/driverCompliance/ComplianceStatusBadge";
 import { RiskFlagList } from "@/components/driverCompliance/RiskFlagList";
@@ -223,16 +224,26 @@ export default function DriverComplianceReviewPage({
 
       <div className="grid gap-6 xl:grid-cols-[1.1fr,0.9fr]">
         <RiskFlagList flags={submission.flags} />
-        <AdminDecisionPanel
-          driverId={driverId}
-          eligibilityStatus={submission.eligibilityStatus}
-          reviewDueAt={submission.reviewDueAt}
-          reviewAid={reviewAid}
-          onDecisionRecorded={(updatedData) => {
-            setReviewData(updatedData);
-            setErrorMessage(null);
-          }}
-        />
+        <div className="space-y-6">
+          <ComplianceDocumentTrackingPanel
+            driverId={driverId}
+            tracking={reviewData.documentTracking}
+            onSaved={(updatedData) => {
+              setReviewData(updatedData);
+              setErrorMessage(null);
+            }}
+          />
+          <AdminDecisionPanel
+            driverId={driverId}
+            eligibilityStatus={submission.eligibilityStatus}
+            reviewDueAt={submission.reviewDueAt}
+            reviewAid={reviewAid}
+            onDecisionRecorded={(updatedData) => {
+              setReviewData(updatedData);
+              setErrorMessage(null);
+            }}
+          />
+        </div>
       </div>
 
       <section className="mt-6 rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900 sm:p-5">
