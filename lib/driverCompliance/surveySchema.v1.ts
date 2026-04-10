@@ -242,9 +242,9 @@ export const driverComplianceSurveySchema: ComplianceSection[] = [
         key: "free_from_uniform_or_logo_requirement",
         section: "control",
         prompt:
-          "Are you free from mandatory company uniforms, badges, or logo display, unless required by law or customer site rules?",
+          "Are you free from mandatory company uniforms, unless required by law or customer site rules?",
         label:
-          "Are you free from mandatory company uniforms, badges, or logo display, unless required by law or customer site rules?",
+          "Are you free from mandatory company uniforms, unless required by law or customer site rules?",
         required: true,
         type: "yes_no",
         weight: 3,

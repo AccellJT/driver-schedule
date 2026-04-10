@@ -103,7 +103,7 @@ export const complianceReviewerQuestionConfig = {
     mismatchSeverity: "medium",
     mismatchCategory: acceptedButReview,
     cannedReviewerNote:
-      "Please confirm whether you are free from mandatory uniforms, badges, or logo display requirements, except where required by law or customer site rules.",
+      "Please confirm whether you are free from mandatory company uniforms, except where required by law or customer site rules.",
   },
   free_to_work_for_others: {
     preferredAnswer: "yes",
