@@ -985,7 +985,7 @@ export async function getComplianceSubmissionByDriverId(
   const context = await getComplianceAccessContext();
   assertCanAccessDriver(driverId, context);
 
-  const [driverResult, profileResult, draftSubmission, latestSubmittedSubmission, feedbackResult] = await Promise.all([
+  const [driverResult, profileResult, draftSubmission, latestSubmittedSubmission] = await Promise.all([
     supabase
       .from("drivers")
       .select("id, full_name, email, active, is_blocked, approval_status")
@@ -1000,18 +1000,10 @@ export async function getComplianceSubmissionByDriverId(
       .maybeSingle(),
     getDraftSubmissionRow(driverId),
     getLatestSubmittedSubmissionRow(driverId),
-    supabase
-      .from("driver_compliance_audit_log")
-      .select("id, event_type, actor_profile_id, note, created_at, event_metadata")
-      .eq("driver_id", driverId)
-      .in("event_type", ["review.changes_requested", "review.rejected", "review.approved"])
-      .order("created_at", { ascending: false })
-      .limit(5),
   ]);
 
   if (driverResult.error) throw new Error(driverResult.error.message);
   if (profileResult.error) throw new Error(profileResult.error.message);
-  if (feedbackResult.error) throw new Error(feedbackResult.error.message);
 
   const driver = (driverResult.data ?? null) as DriverRow | null;
   const profile = (profileResult.data ?? null) as ProfileRow | null;
@@ -1028,9 +1020,24 @@ export async function getComplianceSubmissionByDriverId(
     preferProfileState:
       !submission || !submission.submitted_at || profile?.current_submission_id === submission.id,
   });
-  const latestFeedbackNote = ((feedbackResult.data ?? []) as AuditLogRow[])
-    .map((row) => row.note?.trim())
-    .find((note): note is string => typeof note === "string" && note.length > 0);
+
+  let latestFeedbackNote: string | null = null;
+  if (submission?.id) {
+    const { data: feedbackRows, error: feedbackError } = await supabase
+      .from("driver_compliance_audit_log")
+      .select("id, event_type, actor_profile_id, note, created_at, event_metadata")
+      .eq("driver_id", driverId)
+      .eq("submission_id", submission.id)
+      .in("event_type", ["review.changes_requested", "review.rejected", "review.approved"])
+      .order("created_at", { ascending: false })
+      .limit(1);
+
+    if (feedbackError) throw new Error(feedbackError.message);
+
+    latestFeedbackNote = ((feedbackRows ?? []) as AuditLogRow[])
+      .map((row) => row.note?.trim())
+      .find((note): note is string => typeof note === "string" && note.length > 0) ?? null;
+  }
 
   return latestFeedbackNote ? { ...viewModel, notes: latestFeedbackNote } : viewModel;
 }

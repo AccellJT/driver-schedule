@@ -232,7 +232,7 @@ function QuestionRow({
 
       {guidanceText ? (
         <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-100">
-          <div className="font-semibold">Review guidance</div>
+          <div className="font-semibold">Clarification Needed</div>
           <p className="mt-2 leading-6">{guidanceText}</p>
         </div>
       ) : null}

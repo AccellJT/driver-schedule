@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   buildSectionProgress,
+  deriveComplianceFlags,
   getOverallComplianceProgress,
   normalizeAnswers,
   saveComplianceDraft,
@@ -31,9 +32,13 @@ function renderAdminFollowUpNotes(notes: string) {
       {blocks.map((block, blockIndex) => {
         const lines = block.split("\n").map((line) => line.trim()).filter(Boolean);
         const firstLine = lines.shift() ?? "";
-        const questionMatch = firstLine.match(/^(Q\d+|Review item)\s*—\s*(.+)$/);
-        const questionToken = questionMatch ? questionMatch[1] : null;
+        const questionMatch = firstLine.match(/^(Q\d+|Review(?: item)?)\s*—\s*(.+)$/);
+        let questionToken = questionMatch ? questionMatch[1] : null;
         const questionText = questionMatch ? questionMatch[2] : firstLine;
+
+        if (questionToken === "Review item") {
+          questionToken = "Review";
+        }
 
         return (
           <div
@@ -114,6 +119,18 @@ export function ComplianceWizardLayout({
     return buildSectionProgress(sections, draftAnswers, submission.lastUpdatedAt);
   }, [draftAnswers, sections, submission.lastUpdatedAt]);
 
+  const sectionRiskCounts = useMemo(() => {
+    const flags = deriveComplianceFlags({ answers: draftAnswers, expiresAt: submission.expiresAt });
+    const counts = new Map<string, number>();
+
+    sections.forEach((section) => counts.set(section.key, 0));
+    for (const flag of flags) {
+      counts.set(flag.section, (counts.get(flag.section) ?? 0) + 1);
+    }
+
+    return counts;
+  }, [draftAnswers, sections, submission.expiresAt]);
+
   const draftProgress = useMemo(() => {
     return getOverallComplianceProgress(draftSections);
   }, [draftSections]);
@@ -170,12 +187,6 @@ export function ComplianceWizardLayout({
           document
             .getElementById(`compliance-question-${sectionKey}-${nextQuestion.key}`)
             ?.scrollIntoView({ behavior: "smooth", block: "center" });
-          return;
-        }
-
-        if (sectionIndex < sections.length - 1) {
-          setActiveIndex(sectionIndex + 1);
-          window.scrollTo({ top: 0, behavior: "smooth" });
         }
       }, 120);
     },
@@ -420,8 +431,17 @@ export function ComplianceWizardLayout({
                       </span>
                       <div>
                         <div className="font-medium">{section.title}</div>
-                        <div className="mt-0.5 text-xs opacity-80">
-                          {progress?.completionPercent ?? 0}% complete
+                        <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs opacity-80">
+                          <span>{progress?.completionPercent ?? 0}% complete</span>
+                          <span
+                            className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                              (sectionRiskCounts.get(section.key) ?? 0) > 0
+                                ? "bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-100"
+                                : "bg-zinc-100 text-zinc-700 dark:bg-zinc-900 dark:text-zinc-300"
+                            }`}
+                          >
+                            {(sectionRiskCounts.get(section.key) ?? 0).toString()} open
+                          </span>
                         </div>
                       </div>
                     </div>
