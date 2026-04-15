@@ -66,17 +66,20 @@ export default function DriverComplianceCompletePage({
     <main className="mx-auto max-w-3xl p-4 text-zinc-900 dark:text-zinc-100 sm:p-6 lg:p-8">
       <div className="rounded-xl border border-zinc-200 bg-white p-6 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
         <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex items-center gap-2">
             <ComplianceStatusBadge status={submission.status} />
-            <span className="text-sm text-zinc-600 dark:text-zinc-300">
-              Completion summary for {submission.driverName}
-            </span>
+            <span className="text-sm text-zinc-600 dark:text-zinc-300">Completion summary</span>
           </div>
 
           <ComplianceRecordNav driverId={driverId} activeView="summary" />
         </div>
 
-        <h1 className="text-2xl font-semibold">Compliance Completion</h1>
+        <h1 className="text-3xl font-bold tracking-tight text-zinc-900 dark:text-zinc-100">
+          {submission.driverName}
+        </h1>
+        <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-300">
+          Compliance completion report
+        </p>
         <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-300">
           This page now reflects the live compliance record stored in Supabase.
         </p>
@@ -125,7 +128,7 @@ export default function DriverComplianceCompletePage({
             href={`/compliance/${driverId}`}
             className="rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
           >
-            Back to wizard
+            Back to questions
           </Link>
           <Link
             href="/compliance"

@@ -201,6 +201,7 @@ export interface ComplianceSubmission {
   progress: number;
   score: number;
   submittedAt: string | null;
+  reviewedAt: string | null;
   reviewDueAt: string | null;
   expiresAt: string | null;
   lastUpdatedAt: string;
@@ -218,6 +219,8 @@ export interface DriverComplianceSummary {
   eligibilityStatus: EligibilityStatus;
   progress: number;
   expiresAt: string | null;
+  submittedAt: string | null;
+  reviewedAt: string | null;
   flagCount: number;
   highRiskFlagCount: number;
   lastUpdatedAt: string;

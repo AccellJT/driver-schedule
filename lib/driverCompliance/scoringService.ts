@@ -85,6 +85,58 @@ function isFlaggedQuestion(question: ComplianceQuestion, flags: ComplianceFlag[]
   return flags.some((flag) => flag.questionId === question.id);
 }
 
+function getMaximumPossibleScore(surveyDefinition: ComplianceSurveyDefinition) {
+  return surveyDefinition.sections.reduce((total, section) => {
+    const multiplier = complianceSectionWeights[section.key] ?? 1;
+    const sectionScore = section.questions.reduce((sectionTotal, question) => {
+      return sectionTotal + (question.weight ?? 1) * multiplier;
+    }, 0);
+
+    return total + sectionScore;
+  }, 0);
+}
+
+export function calculateComplianceReviewScore({
+  answers,
+  flags,
+  surveyDefinition = driverComplianceSurveyDefinition,
+}: {
+  answers: ComplianceAnswers;
+  flags?: ComplianceFlag[];
+  surveyDefinition?: ComplianceSurveyDefinition;
+}) {
+  const effectiveFlags = flags ?? deriveComplianceFlags({ answers, surveyDefinition });
+  const maxScore = getMaximumPossibleScore(surveyDefinition);
+
+  if (maxScore <= 0) {
+    return 0;
+  }
+
+  const earnedScore = surveyDefinition.sections.reduce((total, section) => {
+    const multiplier = complianceSectionWeights[section.key] ?? 1;
+
+    const sectionScore = section.questions.reduce((sectionTotal, question) => {
+      const answer = getQuestionAnswer(answers, question);
+
+      if (!isAnswerPresent(answer) || isFlaggedQuestion(question, effectiveFlags)) {
+        return sectionTotal;
+      }
+
+      return sectionTotal + (question.weight ?? 1) * multiplier;
+    }, 0);
+
+    return total + sectionScore;
+  }, 0);
+
+  let score = Math.round((earnedScore / maxScore) * 100);
+
+  for (const flag of effectiveFlags) {
+    score -= complianceFlagPenaltyBySeverity[flag.severity];
+  }
+
+  return clampScore(score);
+}
+
 /**
  * Score is calculated from the config-driven survey schema, not from page-level logic.
  * A question contributes its configured weight only when it has an answer and that

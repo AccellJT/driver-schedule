@@ -8,6 +8,7 @@ import { ComplianceRecordNav } from "@/components/driverCompliance/ComplianceRec
 import { ComplianceStatusBadge } from "@/components/driverCompliance/ComplianceStatusBadge";
 import { RiskFlagList } from "@/components/driverCompliance/RiskFlagList";
 import {
+  calculateComplianceReviewScore,
   evaluateComplianceReviewerAid,
   getComplianceReviewData,
   type ComplianceReviewData,
@@ -75,6 +76,21 @@ export default function DriverComplianceReviewPage({
     });
   }, [reviewData]);
 
+  const reviewScore = useMemo(() => {
+    if (!reviewData) {
+      return 0;
+    }
+
+    return calculateComplianceReviewScore({
+      answers: reviewData.submission.answers,
+      flags: reviewData.submission.flags,
+    });
+  }, [reviewData]);
+
+  const highFlagCount = reviewData?.submission.flags.filter((flag) => flag.severity === "high").length ?? 0;
+  const mediumFlagCount = reviewData?.submission.flags.filter((flag) => flag.severity === "medium").length ?? 0;
+  const lowFlagCount = reviewData?.submission.flags.filter((flag) => flag.severity === "low").length ?? 0;
+
   if (!reviewData && !errorMessage) {
     return (
       <main className="mx-auto max-w-7xl p-4 text-sm text-zinc-600 dark:text-zinc-300 sm:p-6 lg:p-8">
@@ -110,8 +126,11 @@ export default function DriverComplianceReviewPage({
           </div>
 
           <h1 className="text-2xl font-semibold">Compliance Review</h1>
-          <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-300">
-            Review workspace for {submission.driverName}.
+          <h2 className="mt-3 text-3xl font-bold tracking-tight text-zinc-900 dark:text-zinc-100">
+            {submission.driverName}
+          </h2>
+          <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-300">
+            Review workspace for this driver.
           </p>
         </div>
 
@@ -130,8 +149,17 @@ export default function DriverComplianceReviewPage({
           <div className="mt-1 text-lg font-semibold">{submission.eligibilityStatus}</div>
         </div>
         <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
-          <div className="text-sm text-zinc-600 dark:text-zinc-300">Score</div>
-          <div className="mt-1 text-lg font-semibold">{submission.score}/100</div>
+          <div className="text-sm text-zinc-600 dark:text-zinc-300">Severity-adjusted score</div>
+          <div className="mt-1 text-lg font-semibold">{reviewScore}/100</div>
+          <div className="mt-2 text-xs text-zinc-600 dark:text-zinc-400">
+            {submission.flags.length > 0 ? (
+              <>
+                {submission.flags.length} flag{submission.flags.length === 1 ? "" : "s"} — {highFlagCount} high, {mediumFlagCount} medium, {lowFlagCount} low
+              </>
+            ) : (
+              "No risk flags detected"
+            )}
+          </div>
         </div>
         <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
           <div className="text-sm text-zinc-600 dark:text-zinc-300">Flags</div>

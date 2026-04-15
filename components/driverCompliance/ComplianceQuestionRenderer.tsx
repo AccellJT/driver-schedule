@@ -1,15 +1,58 @@
 import {
   getAnswerText,
   getComplianceQuestionNumber,
+  getComplianceReviewerQuestionConfig,
   isAnswerPresent,
   type ComplianceAnswerValue,
   type ComplianceAnswers,
   type ComplianceQuestionDefinition,
   type ComplianceSectionDefinition,
+  type CompliancePreferredAnswer,
 } from "@/lib/driverCompliance";
 
 function toTextValue(value: ComplianceAnswerValue | undefined) {
   return typeof value === "string" ? value : "";
+}
+
+function normalizeBooleanAnswer(value: ComplianceAnswerValue | undefined): boolean | null {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (["yes", "true", "1"].includes(normalized)) return true;
+    if (["no", "false", "0"].includes(normalized)) return false;
+  }
+
+  return null;
+}
+
+function matchesPreferredAnswer(
+  actualAnswer: ComplianceAnswerValue | undefined,
+  preferredAnswer: CompliancePreferredAnswer
+) {
+  if (preferredAnswer === "completed") {
+    return isAnswerPresent(actualAnswer);
+  }
+
+  const normalizedBoolean = normalizeBooleanAnswer(actualAnswer);
+  if (normalizedBoolean === null) {
+    return false;
+  }
+
+  return preferredAnswer === "yes" ? normalizedBoolean : !normalizedBoolean;
+}
+
+function getReviewerGuidance(
+  questionKey: string,
+  answer: ComplianceAnswerValue | undefined
+): string | null {
+  const config = getComplianceReviewerQuestionConfig(questionKey);
+  if (!config) return null;
+
+  if (matchesPreferredAnswer(answer, config.preferredAnswer)) {
+    return null;
+  }
+
+  return config.cannedReviewerNote;
 }
 
 function QuestionRow({
@@ -146,6 +189,8 @@ function QuestionRow({
     }
   }
 
+  const guidanceText = getReviewerGuidance(question.id, answer);
+
   return (
     <div
       id={`compliance-question-${sectionKey}-${question.key}`}
@@ -184,6 +229,13 @@ function QuestionRow({
       </div>
 
       {renderInput()}
+
+      {guidanceText ? (
+        <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-100">
+          <div className="font-semibold">Review guidance</div>
+          <p className="mt-2 leading-6">{guidanceText}</p>
+        </div>
+      ) : null}
     </div>
   );
 }

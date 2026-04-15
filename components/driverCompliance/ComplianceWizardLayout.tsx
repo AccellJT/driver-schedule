@@ -20,6 +20,56 @@ import { ComplianceProgressBar } from "./ComplianceProgressBar";
 import { ComplianceQuestionRenderer } from "./ComplianceQuestionRenderer";
 import { ComplianceRecordNav } from "./ComplianceRecordNav";
 
+function renderAdminFollowUpNotes(notes: string) {
+  const blocks = notes
+    .split(/\n\s*\n/)
+    .map((block) => block.trim())
+    .filter(Boolean);
+
+  return (
+    <div className="mt-1 space-y-4">
+      {blocks.map((block, blockIndex) => {
+        const lines = block.split("\n").map((line) => line.trim()).filter(Boolean);
+        const firstLine = lines.shift() ?? "";
+        const questionMatch = firstLine.match(/^(Q\d+|Review item)\s*—\s*(.+)$/);
+        const questionToken = questionMatch ? questionMatch[1] : null;
+        const questionText = questionMatch ? questionMatch[2] : firstLine;
+
+        return (
+          <div
+            key={blockIndex}
+            className="rounded-2xl border border-amber-200 bg-amber-100 p-4 text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-100"
+          >
+            <div className="text-sm font-semibold">
+              {questionToken ? (
+                <>
+                  <span className="font-bold">{questionToken}</span> — {questionText}
+                </>
+              ) : (
+                questionText
+              )}
+            </div>
+            <div className="mt-3 space-y-2 text-sm leading-6">
+              {lines.map((line, lineIndex) => {
+                const [label, ...rest] = line.split(":");
+                const value = rest.join(":").trim();
+
+                return value ? (
+                  <p key={lineIndex}>
+                    <span className="font-semibold">{label.trim()}:</span> {value}
+                  </p>
+                ) : (
+                  <p key={lineIndex}>{line}</p>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export function ComplianceWizardLayout({
   driverId,
   submission,
@@ -265,9 +315,12 @@ export function ComplianceWizardLayout({
           {viewer.isAdmin ? "← Back to compliance dashboard" : "← Back to my compliance overview"}
         </Link>
 
-        <h1 className="mt-2 text-2xl font-semibold">Driver Compliance Wizard</h1>
-        <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-300">
-          {submission.driverName} • Packet version {submission.version} • Last updated {submission.lastUpdatedAt}
+<h1 className="mt-2 text-2xl font-semibold">Driver Compliance Questions</h1>
+        <h2 className="mt-3 text-3xl font-bold tracking-tight text-zinc-900 dark:text-zinc-100">
+          {submission.driverName}
+        </h2>
+        <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-300">
+          Packet version {submission.version} • Last updated {submission.lastUpdatedAt}
         </p>
 
         {viewer.isAdmin && (
@@ -306,7 +359,7 @@ export function ComplianceWizardLayout({
           (canEditDraft && submission.status === "in_progress")) && (
           <div className="mb-6 rounded border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200">
             <div className="font-semibold">Admin follow-up note</div>
-            <p className="mt-1">{submission.notes}</p>
+            {renderAdminFollowUpNotes(submission.notes)}
             <p className="mt-2 text-xs opacity-90">
               Update your responses, save the draft, and submit again when you are ready.
             </p>
