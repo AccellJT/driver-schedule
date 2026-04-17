@@ -47,10 +47,6 @@ function formatDate(value: string | null) {
   });
 }
 
-function getProfileDisplayName(profile: Profile) {
-  return profile.name?.trim() || profile.role || profile.id;
-}
-
 export default function AdminAuditPage() {
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [drivers, setDrivers] = useState<Driver[]>([]);
@@ -115,6 +111,31 @@ export default function AdminAuditPage() {
     () => new Map(drivers.map((driver) => [driver.id, driver.approval_status])),
     [drivers]
   );
+
+  const driverNameById = useMemo(
+    () => new Map(drivers.map((driver) => [driver.id, driver.full_name])),
+    [drivers]
+  );
+
+  const profileNameById = useMemo(
+    () =>
+      new Map(
+        profiles.map((profile) => [
+          profile.id,
+          profile.name?.trim() ||
+            (profile.driver_id ? driverNameById.get(profile.driver_id) : null) ||
+            profile.role ||
+            profile.id,
+        ])
+      ),
+    [profiles, driverNameById]
+  );
+
+  const getProfileDisplayName = (profile: Profile) =>
+    profile.name?.trim() ||
+    (profile.driver_id ? driverNameById.get(profile.driver_id) : null) ||
+    profile.role ||
+    profile.id;
 
   const filteredProfiles = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
@@ -573,7 +594,7 @@ export default function AdminAuditPage() {
                                   {formatDate(entry.created_at)}
                                 </td>
                                 <td className="max-w-[10rem] break-words whitespace-normal px-3 py-3 text-sm text-zinc-600 dark:text-zinc-300">
-                                  {entry.actor_name || entry.actor_role || entry.actor_profile_id || "Unknown"}
+                                  {entry.actor_name || profileNameById.get(entry.actor_profile_id ?? "") || (entry.actor_role === "driver" && entry.target_driver_id ? driverNameById.get(entry.target_driver_id) : null) || entry.actor_role || entry.actor_profile_id || "Unknown"}
                                 </td>
                                 <td className="max-w-[10rem] break-words whitespace-normal px-3 py-3 text-sm text-zinc-600 dark:text-zinc-300">
                                   {entry.action.replace("availability.", "")}

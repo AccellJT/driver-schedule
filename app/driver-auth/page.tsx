@@ -77,6 +77,7 @@ export default function DriverAuthPage() {
         .from("profiles")
         .update({
           role: "driver",
+          name: driver.full_name,
           driver_id: driver.id,
         })
         .eq("id", user.id);

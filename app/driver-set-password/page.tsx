@@ -102,6 +102,7 @@ export default function DriverSetPasswordPage() {
         {
           id: user.id,
           role: "driver",
+          name: driver.full_name,
           driver_id: driver.id,
         },
         { onConflict: "id" }

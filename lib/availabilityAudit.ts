@@ -50,7 +50,7 @@ export async function recordAvailabilityActivity({
   if (authUserId) {
     const { data: profile, error: profileError } = await supabase
       .from("profiles")
-      .select("id, name, role")
+      .select("id, name, role, driver_id")
       .eq("id", authUserId)
       .single();
 
@@ -58,8 +58,32 @@ export async function recordAvailabilityActivity({
       actorProfileId = profile.id;
       actorName = profile.name ?? null;
       actorRole = profile.role ?? null;
+
+      if (!actorName && profile.driver_id) {
+        const { data: driver, error: driverError } = await supabase
+          .from("drivers")
+          .select("full_name")
+          .eq("id", profile.driver_id)
+          .single();
+
+        if (!driverError && driver) {
+          actorName = driver.full_name;
+        }
+      }
     } else if (profileError) {
       console.warn("Unable to resolve audit actor profile", profileError.message);
+    }
+  }
+
+  if (!targetDriverName && targetDriverId) {
+    const { data: targetDriver, error: targetDriverError } = await supabase
+      .from("drivers")
+      .select("full_name")
+      .eq("id", targetDriverId)
+      .single();
+
+    if (!targetDriverError && targetDriver) {
+      targetDriverName = targetDriver.full_name;
     }
   }
 
