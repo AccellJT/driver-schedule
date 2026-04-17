@@ -53,7 +53,7 @@ export default function DriverAuthPage() {
       // Match driver by email, excluding blocked drivers
       const { data: driver, error: driverError } = await supabase
         .from("drivers")
-        .select("id, approval_status")
+        .select("id, full_name, approval_status")
         .ilike("email", user.email)
         .maybeSingle();
 
