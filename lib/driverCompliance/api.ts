@@ -632,6 +632,7 @@ export async function getComplianceDashboardData(): Promise<ComplianceDashboardD
   let driversQuery = supabase
     .from("drivers")
     .select("id, full_name, email, active, is_blocked, approval_status")
+    .neq("approval_status", "blocked")
     .order("full_name", { ascending: true });
 
   let profilesQuery = supabase.from("driver_compliance_profiles").select(

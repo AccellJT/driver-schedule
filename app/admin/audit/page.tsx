@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
+import { recordAvailabilityActivity } from "@/lib/availabilityAudit";
 
 type Profile = {
   id: string;
@@ -16,6 +17,7 @@ type Profile = {
 type Driver = {
   id: string;
   full_name: string;
+  approval_status: "pending" | "approved" | "blocked" | null;
 };
 
 type AuditEntry = {
@@ -61,7 +63,6 @@ export default function AdminAuditPage() {
   const [showAllHistory, setShowAllHistory] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [lastLoadedAt, setLastLoadedAt] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -75,7 +76,7 @@ export default function AdminAuditPage() {
           .from("profiles")
           .select("id, name, role, driver_id, created_at, last_login_at")
           .order("name", { ascending: true }),
-        supabase.from("drivers").select("id, full_name").order("full_name", { ascending: true }),
+        supabase.from("drivers").select("id, full_name, approval_status").order("full_name", { ascending: true }),
         supabase
           .from("availability_activity_log")
           .select(
@@ -97,7 +98,6 @@ export default function AdminAuditPage() {
         setProfiles((profilesResult.data ?? []) as Profile[]);
         setDrivers((driversResult.data ?? []) as Driver[]);
         setAuditRows((auditResult.data ?? []) as AuditEntry[]);
-        setLastLoadedAt(new Date().toLocaleString());
       }
 
       setIsLoading(false);
@@ -109,10 +109,24 @@ export default function AdminAuditPage() {
     };
   }, []);
 
+  const [showRemovedDrivers, setShowRemovedDrivers] = useState(false);
+
+  const driverStatusById = useMemo(
+    () => new Map(drivers.map((driver) => [driver.id, driver.approval_status])),
+    [drivers]
+  );
+
   const filteredProfiles = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
 
-    return profiles.filter((profile) => {
+    const visibleProfiles = profiles.filter((profile) => {
+      if (showRemovedDrivers) {
+        const status = profile.driver_id ? driverStatusById.get(profile.driver_id) : null;
+        if (status !== "blocked") {
+          return false;
+        }
+      }
+
       if (roleFilter !== "all" && profile.role !== roleFilter) {
         return false;
       }
@@ -125,29 +139,90 @@ export default function AdminAuditPage() {
         profile.id.toLowerCase().includes(query)
       );
     });
-  }, [profiles, roleFilter, searchQuery]);
 
-  useEffect(() => {
-    if (!selectedProfileId && filteredProfiles.length > 0) {
-      setSelectedProfileId(filteredProfiles[0].id);
-    }
-  }, [filteredProfiles, selectedProfileId]);
-
-  const selectedProfile = profiles.find((profile) => profile.id === selectedProfileId) ?? null;
-  const selectedDriverName = selectedProfile
-    ? drivers.find((driver) => driver.id === selectedProfile.driver_id)?.full_name ?? "Unknown"
-    : "Unknown";
-  const totalActivityCount = auditRows.length;
-
-  const selectedUserActivity = useMemo(() => {
-    if (!selectedProfile) return [];
-
-    return auditRows.filter((row) => {
-      if (row.actor_profile_id === selectedProfile.id) return true;
-      if (selectedProfile.driver_id && row.target_driver_id === selectedProfile.driver_id) return true;
-      return false;
+    return visibleProfiles.sort((a, b) => {
+      const aTime = a.last_login_at ? new Date(a.last_login_at).getTime() : 0;
+      const bTime = b.last_login_at ? new Date(b.last_login_at).getTime() : 0;
+      return bTime - aTime;
     });
-  }, [auditRows, selectedProfile]);
+  }, [profiles, roleFilter, searchQuery, showRemovedDrivers, driverStatusById]);
+
+  const filteredProfileIds = useMemo(
+    () => new Set(filteredProfiles.map((profile) => profile.id)),
+    [filteredProfiles]
+  );
+
+  const activeProfileId =
+    selectedProfileId && filteredProfileIds.has(selectedProfileId)
+      ? selectedProfileId
+      : filteredProfiles[0]?.id ?? "";
+
+  const selectedProfile = profiles.find((profile) => profile.id === activeProfileId) ?? null;
+  const selectedDriver = selectedProfile
+    ? drivers.find((driver) => driver.id === selectedProfile.driver_id) ?? null
+    : null;
+  const selectedDriverIsActive = selectedDriver?.approval_status !== "blocked";
+
+  const [isSavingReAdd, setIsSavingReAdd] = useState(false);
+
+  async function handleReAddDriver() {
+    if (!selectedDriver) return;
+
+    setErrorMessage(null);
+    setIsSavingReAdd(true);
+
+    const { error } = await supabase
+      .from("drivers")
+      .update({ approval_status: "approved" })
+      .eq("id", selectedDriver.id);
+
+    if (error) {
+      setErrorMessage(error.message);
+      setIsSavingReAdd(false);
+      return;
+    }
+
+    const auditResult = await recordAvailabilityActivity({
+      action: "availability.driver_readded",
+      details: `Re-added ${selectedDriver.full_name} to weekly availability.`,
+      targetDriverId: selectedDriver.id,
+      targetDriverName: selectedDriver.full_name,
+      source: "admin.audit.page",
+    });
+
+    if (auditResult.error) {
+      setErrorMessage(
+        `Driver re-added, but audit logging failed: ${auditResult.error.message || "unknown error"}`
+      );
+    }
+
+    setDrivers((current) =>
+      current.map((driver) =>
+        driver.id === selectedDriver.id
+          ? { ...driver, approval_status: "approved" }
+          : driver
+      )
+    );
+
+    setAuditRows((current) => [
+      {
+        id: `readd-${Date.now()}`,
+        created_at: new Date().toISOString(),
+        actor_profile_id: null,
+        actor_role: "admin",
+        actor_name: "Admin",
+        target_driver_id: selectedDriver.id,
+        target_driver_name: selectedDriver.full_name,
+        action: "availability.driver_readded",
+        details: `Re-added ${selectedDriver.full_name} to weekly availability.`,
+        source: "admin.audit.page",
+        event_metadata: null,
+      },
+      ...current,
+    ]);
+
+    setIsSavingReAdd(false);
+  }
 
   const filteredAuditRows = useMemo(() => {
     const dateMatches = (row: AuditEntry) => {
@@ -160,20 +235,17 @@ export default function AdminAuditPage() {
       return true;
     };
 
-    if (filteredProfiles.length === profiles.length && !historyStartDate && !historyEndDate) {
-      return auditRows;
-    }
+    if (!selectedProfile) return [];
 
-    const allowedProfileIds = new Set(filteredProfiles.map((profile) => profile.id));
-    const allowedDriverIds = new Set(filteredProfiles.map((profile) => profile.driver_id).filter(Boolean));
+    const selectedDriverId = selectedProfile.driver_id;
 
     return auditRows.filter((row) => {
       if (!dateMatches(row)) return false;
-      if (allowedProfileIds.has(row.actor_profile_id ?? "")) return true;
-      if (row.target_driver_id && allowedDriverIds.has(row.target_driver_id)) return true;
+      if (row.actor_profile_id === selectedProfile.id) return true;
+      if (selectedDriverId && row.target_driver_id === selectedDriverId) return true;
       return false;
     });
-  }, [auditRows, filteredProfiles, historyStartDate, historyEndDate, profiles.length]);
+  }, [auditRows, selectedProfile, historyStartDate, historyEndDate]);
 
   const displayedAuditRows = useMemo(
     () => (showAllHistory ? filteredAuditRows : filteredAuditRows.slice(0, 8)),
@@ -208,14 +280,13 @@ export default function AdminAuditPage() {
             onClick={() => {
               setIsLoading(true);
               setErrorMessage(null);
-              setLastLoadedAt(null);
               void (async () => {
                 const [profilesResult, driversResult, auditResult] = await Promise.all([
                   supabase
                     .from("profiles")
                     .select("id, name, role, driver_id, created_at, last_login_at")
                     .order("name", { ascending: true }),
-                  supabase.from("drivers").select("id, full_name").order("full_name", { ascending: true }),
+                  supabase.from("drivers").select("id, full_name, approval_status").order("full_name", { ascending: true }),
                   supabase
                     .from("availability_activity_log")
                     .select(
@@ -235,7 +306,6 @@ export default function AdminAuditPage() {
                   setProfiles((profilesResult.data ?? []) as Profile[]);
                   setDrivers((driversResult.data ?? []) as Driver[]);
                   setAuditRows((auditResult.data ?? []) as AuditEntry[]);
-                  setLastLoadedAt(new Date().toLocaleString());
                 }
 
                 setIsLoading(false);
@@ -283,6 +353,17 @@ export default function AdminAuditPage() {
                   {role === "all" ? "All" : role}
                 </button>
               ))}
+              <button
+                type="button"
+                onClick={() => setShowRemovedDrivers((current) => !current)}
+                className={`rounded-full border px-3 py-2 text-sm font-semibold transition ${
+                  showRemovedDrivers
+                    ? "border-red-600 bg-red-50 text-red-700 dark:border-red-400 dark:bg-red-950 dark:text-red-200"
+                    : "border-zinc-300 bg-white text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
+                }`}
+              >
+                {showRemovedDrivers ? "Showing removed" : "Show removed drivers"}
+              </button>
             </div>
           </div>
 
@@ -297,6 +378,9 @@ export default function AdminAuditPage() {
                     Role
                   </th>
                   <th className="px-3 py-3 text-left text-xs font-semibold uppercase tracking-wide text-zinc-500">
+                    Status
+                  </th>
+                  <th className="px-3 py-3 text-left text-xs font-semibold uppercase tracking-wide text-zinc-500">
                     Last login
                   </th>
                 </tr>
@@ -306,7 +390,7 @@ export default function AdminAuditPage() {
                   <tr
                     key={profile.id}
                     className={`cursor-pointer transition hover:bg-zinc-100 dark:hover:bg-zinc-800 ${
-                      profile.id === selectedProfileId ? "bg-blue-50 dark:bg-blue-950/50" : ""
+                      profile.id === activeProfileId ? "bg-blue-50 dark:bg-blue-950/50" : ""
                     }`}
                     onClick={() => setSelectedProfileId(profile.id)}
                   >
@@ -315,6 +399,23 @@ export default function AdminAuditPage() {
                     </td>
                     <td className="px-3 py-3 text-sm text-zinc-600 dark:text-zinc-300">
                       {profile.role || "unknown"}
+                    </td>
+                    <td className="px-3 py-3 text-sm text-zinc-600 dark:text-zinc-300">
+                      {profile.driver_id ? (
+                        <span
+                          className={`inline-flex rounded-full px-2 py-1 text-[10px] font-semibold uppercase tracking-wide ${
+                            driverStatusById.get(profile.driver_id) === "blocked"
+                              ? "bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-200"
+                              : "bg-emerald-100 text-emerald-700 dark:bg-emerald-900 dark:text-emerald-200"
+                          }`}
+                        >
+                          {driverStatusById.get(profile.driver_id) === "blocked"
+                            ? "Removed"
+                            : "Active"}
+                        </span>
+                      ) : (
+                        <span className="text-xs text-zinc-500 dark:text-zinc-400">N/A</span>
+                      )}
                     </td>
                     <td className="px-3 py-3 text-sm text-zinc-600 dark:text-zinc-300">
                       {formatDate(profile.last_login_at)}
@@ -344,56 +445,28 @@ export default function AdminAuditPage() {
             <div className="text-sm text-zinc-600 dark:text-zinc-400">Select a user to view activity.</div>
           ) : (
             <>
-              <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <div>
-                  <h2 className="text-lg font-semibold">{getProfileDisplayName(selectedProfile)}</h2>
-                  <p className="text-sm text-zinc-600 dark:text-zinc-400">
-                    Profile ID: {selectedProfile.id}
-                  </p>
-                </div>
-                <span className="inline-flex rounded-full border border-zinc-300 bg-zinc-100 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-zinc-700 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200">
-                  {selectedProfile.role ?? "unknown"}
-                </span>
-              </div>
-
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-4 dark:border-zinc-800 dark:bg-zinc-900">
-                  <div className="text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Driver link</div>
-                  <div className="mt-1 text-sm font-medium text-zinc-900 dark:text-zinc-100">
-                    {selectedProfile.driver_id ? selectedDriverName : "Not applicable"}
-                  </div>
-                </div>
-                <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-4 dark:border-zinc-800 dark:bg-zinc-900">
-                  <div className="text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Last login</div>
-                  <div className="mt-1 text-sm font-medium text-zinc-900 dark:text-zinc-100">
-                    {selectedProfile.last_login_at ? formatDate(selectedProfile.last_login_at) : "Not tracked"}
-                  </div>
-                </div>
-                <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-4 dark:border-zinc-800 dark:bg-zinc-900">
-                  <div className="text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Account created</div>
-                  <div className="mt-1 text-sm font-medium text-zinc-900 dark:text-zinc-100">
-                    {formatDate(selectedProfile.created_at)}
-                  </div>
-                </div>
-                <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-4 dark:border-zinc-800 dark:bg-zinc-900">
-                  <div className="text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Recent events</div>
-                  <div className="mt-1 text-sm font-medium text-zinc-900 dark:text-zinc-100">
-                    {selectedUserActivity.length}
-                  </div>
-                </div>
-                <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-4 dark:border-zinc-800 dark:bg-zinc-900">
-                  <div className="text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Total audit rows</div>
-                  <div className="mt-1 text-sm font-medium text-zinc-900 dark:text-zinc-100">
-                    {totalActivityCount}
-                  </div>
-                </div>
-              </div>
-
-              <div className="mt-6">
-                <h3 className="text-base font-semibold">Audit history</h3>
+              <div className="mb-4">
+                <h2 className="text-lg font-semibold">{getProfileDisplayName(selectedProfile)}</h2>
                 <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
-                  View recent changes across all users, or narrow results by date range.
+                  Profile ID: {selectedProfile.id}
                 </p>
+                {selectedDriver && (
+                  <p className="mt-3 text-sm text-zinc-700 dark:text-zinc-300">
+                    {selectedDriverIsActive
+                      ? "Active on weekly availability"
+                      : "Removed from weekly availability"}
+                  </p>
+                )}
+                {selectedDriver?.approval_status === "blocked" && (
+                  <button
+                    type="button"
+                    onClick={handleReAddDriver}
+                    disabled={isSavingReAdd}
+                    className="mt-4 rounded bg-emerald-600 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
+                  >
+                    {isSavingReAdd ? "Re-adding…" : "Re-add to weekly availability"}
+                  </button>
+                )}
               </div>
 
               <div className="mt-6 rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
@@ -401,7 +474,7 @@ export default function AdminAuditPage() {
                   <div>
                     <h2 className="text-lg font-semibold">Filtered audit history</h2>
                     <p className="text-sm text-zinc-600 dark:text-zinc-400">
-                      Showing availability audit entries for the currently filtered user set.
+                      Showing availability audit entries for the currently selected user.
                     </p>
                   </div>
                   <span className="inline-flex rounded-full border border-zinc-300 bg-zinc-50 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-zinc-700 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200">
@@ -486,6 +559,9 @@ export default function AdminAuditPage() {
                                 Action
                               </th>
                               <th className="px-3 py-3 text-left text-xs font-semibold uppercase tracking-wide text-zinc-500">
+                                Driver status
+                              </th>
+                              <th className="px-3 py-3 text-left text-xs font-semibold uppercase tracking-wide text-zinc-500">
                                 Details
                               </th>
                             </tr>
@@ -501,6 +577,23 @@ export default function AdminAuditPage() {
                                 </td>
                                 <td className="max-w-[10rem] break-words whitespace-normal px-3 py-3 text-sm text-zinc-600 dark:text-zinc-300">
                                   {entry.action.replace("availability.", "")}
+                                </td>
+                                <td className="max-w-[10rem] break-words whitespace-normal px-3 py-3 text-sm text-zinc-600 dark:text-zinc-300">
+                                  {entry.target_driver_id ? (
+                                    <span
+                                      className={`inline-flex rounded-full px-2 py-1 text-[10px] font-semibold uppercase tracking-wide ${
+                                        driverStatusById.get(entry.target_driver_id) === "blocked"
+                                          ? "bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-200"
+                                          : "bg-emerald-100 text-emerald-700 dark:bg-emerald-900 dark:text-emerald-200"
+                                      }`}
+                                    >
+                                      {driverStatusById.get(entry.target_driver_id) === "blocked"
+                                        ? "Removed"
+                                        : "Active"}
+                                    </span>
+                                  ) : (
+                                    "N/A"
+                                  )}
                                 </td>
                                 <td className="max-w-[20rem] break-words whitespace-normal px-3 py-3 text-sm text-zinc-600 dark:text-zinc-300">
                                   {entry.details ?? "—"}

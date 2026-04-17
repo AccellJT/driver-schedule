@@ -5,7 +5,8 @@ export type AvailabilityAuditAction =
   | "availability.slot_updated"
   | "availability.slot_deleted"
   | "availability.week_copied"
-  | "availability.request_update";
+  | "availability.request_update"
+  | "availability.driver_readded";
 
 export interface AvailabilityAuditEntry {
   id: string;
