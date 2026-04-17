@@ -55,7 +55,13 @@ function getReviewTargetBadge(
   return null;
 }
 
-type DashboardFilter = "all" | "needs-review" | "flags" | "follow-up";
+type DashboardFilter =
+  | "all"
+  | "driver-review"
+  | "admin-review"
+  | "in-progress"
+  | "not-started"
+  | "high-flags";
 
 export default function ComplianceDashboardPage() {
   const [dashboard, setDashboard] = useState<ComplianceDashboardData | null>(null);
@@ -101,29 +107,38 @@ export default function ComplianceDashboardPage() {
     ? "Back to dispatcher page"
     : "Back to driver availability page";
 
-  const followUpCount = (dashboard?.rows ?? []).filter(
-    (row) =>
-      ["review_required", "blocked", "expired", "conditionally_approved"].includes(row.status) ||
-      row.documentAlertCount > 0
-  ).length;
+  const rows = dashboard?.rows ?? [];
+  const driverReviewCount = rows.filter((row) => row.status === "review_required").length;
+  const adminReviewCount = rows.filter((row) => row.status === "submitted").length;
+  const inProgressCount = rows.filter((row) => row.status === "in_progress").length;
+  const notStartedCount = rows.filter((row) => row.status === "not_started").length;
+  const highFlagCount = rows.filter((row) => row.highRiskFlagCount > 0).length;
+  const insurancePendingCount = rows.filter((row) => {
+    const insuranceAlert = row.documentAlerts.find((alert) => alert.key === "insurance");
+    return !row.documentTracking.insuranceSavedToGusto || insuranceAlert?.status !== "current";
+  }).length;
+  const dlPendingCount = rows.filter((row) => {
+    const dlAlert = row.documentAlerts.find((alert) => alert.key === "drivers_license");
+    return !row.documentTracking.driversLicenseSavedToGusto || dlAlert?.status !== "current";
+  }).length;
+  const w9PendingCount = rows.filter((row) => !row.documentTracking.w9SavedToGusto).length;
+  const contractPendingCount = rows.filter((row) => !row.documentTracking.contractSavedToGusto).length;
 
   const filteredRows = (() => {
-    const rows = dashboard?.rows ?? [];
     const normalizedSearchQuery = searchQuery.trim().toLowerCase();
 
     const filteredByQuickFilter = (() => {
       switch (activeFilter) {
-        case "needs-review":
-          return rows.filter((row) => ["submitted", "review_required"].includes(row.status));
-        case "flags":
-          return rows.filter((row) => row.flagCount > 0);
-        case "follow-up":
-          return rows.filter(
-            (row) =>
-              ["review_required", "blocked", "expired", "conditionally_approved"].includes(
-                row.status
-              ) || row.documentAlertCount > 0
-          );
+        case "driver-review":
+          return rows.filter((row) => row.status === "review_required");
+        case "admin-review":
+          return rows.filter((row) => row.status === "submitted");
+        case "in-progress":
+          return rows.filter((row) => row.status === "in_progress");
+        case "not-started":
+          return rows.filter((row) => row.status === "not_started");
+        case "high-flags":
+          return rows.filter((row) => row.highRiskFlagCount > 0);
         case "all":
         default:
           return rows;
@@ -176,65 +191,110 @@ export default function ComplianceDashboardPage() {
       </div>
 
       {isAdmin && (
-        <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <label className="flex w-full max-w-md flex-col gap-2 text-sm text-zinc-700 dark:text-zinc-300">
-            <span className="font-semibold">Search drivers</span>
-            <input
-              type="search"
-              value={searchQuery}
-              onChange={(event) => setSearchQuery(event.target.value)}
-              placeholder="Search by name or driver ID"
-              className="h-11 w-full rounded-lg border border-zinc-200 bg-white px-3 text-sm text-zinc-900 shadow-sm outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-200 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-100 dark:focus:border-blue-400 dark:focus:ring-blue-900"
-            />
-          </label>
+        <>
+          <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <label className="flex w-full max-w-md flex-col gap-2 text-sm text-zinc-700 dark:text-zinc-300">
+              <span className="font-semibold">Search drivers</span>
+              <input
+                type="search"
+                value={searchQuery}
+                onChange={(event) => setSearchQuery(event.target.value)}
+                placeholder="Search by name or driver ID"
+                className="h-11 w-full rounded-lg border border-zinc-200 bg-white px-3 text-sm text-zinc-900 shadow-sm outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-200 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-100 dark:focus:border-blue-400 dark:focus:ring-blue-900"
+              />
+            </label>
 
-          <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={() => setActiveFilter("all")}
-              className={`rounded-full border px-3 py-2 text-sm font-semibold ${
-                activeFilter === "all"
-                  ? "border-blue-600 bg-blue-50 text-blue-700 dark:border-blue-400 dark:bg-blue-950 dark:text-blue-200"
-                  : "border-zinc-300 bg-white text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
-              }`}
-            >
-              All
-            </button>
-            <button
-              type="button"
-              onClick={() => setActiveFilter("needs-review")}
-              className={`rounded-full border px-3 py-2 text-sm font-semibold ${
-                activeFilter === "needs-review"
-                  ? "border-blue-600 bg-blue-50 text-blue-700 dark:border-blue-400 dark:bg-blue-950 dark:text-blue-200"
-                  : "border-zinc-300 bg-white text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
-              }`}
-            >
-              Review needed
-            </button>
-            <button
-              type="button"
-              onClick={() => setActiveFilter("flags")}
-              className={`rounded-full border px-3 py-2 text-sm font-semibold ${
-                activeFilter === "flags"
-                  ? "border-blue-600 bg-blue-50 text-blue-700 dark:border-blue-400 dark:bg-blue-950 dark:text-blue-200"
-                  : "border-zinc-300 bg-white text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
-              }`}
-            >
-              Flags
-            </button>
-            <button
-              type="button"
-              onClick={() => setActiveFilter("follow-up")}
-              className={`rounded-full border px-3 py-2 text-sm font-semibold ${
-                activeFilter === "follow-up"
-                  ? "border-blue-600 bg-blue-50 text-blue-700 dark:border-blue-400 dark:bg-blue-950 dark:text-blue-200"
-                  : "border-zinc-300 bg-white text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
-              }`}
-            >
-              Follow-up ({followUpCount})
-            </button>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => setActiveFilter("all")}
+                className={`rounded-full border px-3 py-2 text-sm font-semibold ${
+                  activeFilter === "all"
+                    ? "border-blue-600 bg-blue-50 text-blue-700 dark:border-blue-400 dark:bg-blue-950 dark:text-blue-200"
+                    : "border-zinc-300 bg-white text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
+                }`}
+              >
+                All ({rows.length})
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveFilter("driver-review")}
+                className={`rounded-full border px-3 py-2 text-sm font-semibold ${
+                  activeFilter === "driver-review"
+                    ? "border-blue-600 bg-blue-50 text-blue-700 dark:border-blue-400 dark:bg-blue-950 dark:text-blue-200"
+                    : "border-zinc-300 bg-white text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
+                }`}
+              >
+                Driver review ({driverReviewCount})
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveFilter("admin-review")}
+                className={`rounded-full border px-3 py-2 text-sm font-semibold ${
+                  activeFilter === "admin-review"
+                    ? "border-blue-600 bg-blue-50 text-blue-700 dark:border-blue-400 dark:bg-blue-950 dark:text-blue-200"
+                    : "border-zinc-300 bg-white text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
+                }`}
+              >
+                Admin review ({adminReviewCount})
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveFilter("in-progress")}
+                className={`rounded-full border px-3 py-2 text-sm font-semibold ${
+                  activeFilter === "in-progress"
+                    ? "border-blue-600 bg-blue-50 text-blue-700 dark:border-blue-400 dark:bg-blue-950 dark:text-blue-200"
+                    : "border-zinc-300 bg-white text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
+                }`}
+              >
+                In progress ({inProgressCount})
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveFilter("not-started")}
+                className={`rounded-full border px-3 py-2 text-sm font-semibold ${
+                  activeFilter === "not-started"
+                    ? "border-blue-600 bg-blue-50 text-blue-700 dark:border-blue-400 dark:bg-blue-950 dark:text-blue-200"
+                    : "border-zinc-300 bg-white text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
+                }`}
+              >
+                Not started ({notStartedCount})
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveFilter("high-flags")}
+                className={`rounded-full border px-3 py-2 text-sm font-semibold ${
+                  activeFilter === "high-flags"
+                    ? "border-blue-600 bg-blue-50 text-blue-700 dark:border-blue-400 dark:bg-blue-950 dark:text-blue-200"
+                    : "border-zinc-300 bg-white text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
+                }`}
+              >
+                Packets with high flags ({highFlagCount})
+              </button>
+            </div>
           </div>
-        </div>
+
+          <div className="mb-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            {[
+              { label: "Insurance pending", value: insurancePendingCount },
+              { label: "DL pending", value: dlPendingCount },
+              { label: "W-9 pending", value: w9PendingCount },
+              { label: "Contract pending", value: contractPendingCount },
+            ].map((card) => (
+              <div
+                key={card.label}
+                className="rounded-xl border border-zinc-200 bg-zinc-50 p-3 shadow-sm dark:border-zinc-800 dark:bg-zinc-950"
+              >
+                <div className="text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+                  {card.label}
+                </div>
+                <div className="mt-1 text-2xl font-semibold text-zinc-900 dark:text-zinc-100">
+                  {card.value}
+                </div>
+              </div>
+            ))}
+          </div>
+        </>
       )}
 
       {errorMessage && (
@@ -323,38 +383,7 @@ export default function ComplianceDashboardPage() {
 
           {isAdmin && (
             <>
-              <div className="mb-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-                {[
-                  { key: "all" as const, label: "All packets", value: dashboard.totalDrivers },
-                  {
-                    key: "needs-review" as const,
-                    label: "Needs review",
-                    value: dashboard.pendingReviewCount,
-                  },
-                  { key: "flags" as const, label: "Packets with flags", value: dashboard.flaggedCount },
-                  { key: "follow-up" as const, label: "Follow-up items", value: followUpCount },
-                ].map((card) => {
-                  const isActive = activeFilter === card.key;
-
-                  return (
-                    <button
-                      key={card.key}
-                      type="button"
-                      onClick={() => setActiveFilter(card.key)}
-                      className={`rounded-xl border p-4 text-left shadow-sm transition dark:border-zinc-800 ${
-                        isActive
-                          ? "border-blue-500 bg-blue-50 dark:bg-blue-950/40"
-                          : "border-zinc-200 bg-white dark:bg-zinc-900"
-                      }`}
-                    >
-                      <div className="text-sm text-zinc-600 dark:text-zinc-300">{card.label}</div>
-                      <div className="mt-1 text-2xl font-semibold">{card.value}</div>
-                    </button>
-                  );
-                })}
-              </div>
-
-              <div className="mb-4 text-sm text-zinc-600 dark:text-zinc-300">
+                  <div className="mb-4 text-sm text-zinc-600 dark:text-zinc-300">
                 Showing <span className="font-medium">{filteredRows.length}</span> row(s) for the
                 selected quick filter.
               </div>
