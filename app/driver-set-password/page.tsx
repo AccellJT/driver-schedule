@@ -73,7 +73,7 @@ export default function DriverSetPasswordPage() {
 
     const { data: driver, error: driverError } = await supabase
       .from("drivers")
-      .select("id, email, approval_status")
+      .select("id, email, full_name, approval_status")
       .ilike("email", user.email)
       .maybeSingle();
 
