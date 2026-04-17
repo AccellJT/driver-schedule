@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { recordAvailabilityActivity } from "@/lib/availabilityAudit";
 
@@ -131,11 +131,14 @@ export default function AdminAuditPage() {
     [profiles, driverNameById]
   );
 
-  const getProfileDisplayName = (profile: Profile) =>
-    profile.name?.trim() ||
-    (profile.driver_id ? driverNameById.get(profile.driver_id) : null) ||
-    profile.role ||
-    profile.id;
+  const getProfileDisplayName = useCallback(
+    (profile: Profile) =>
+      profile.name?.trim() ||
+      (profile.driver_id ? driverNameById.get(profile.driver_id) : null) ||
+      profile.role ||
+      profile.id,
+    [driverNameById]
+  );
 
   const filteredProfiles = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
@@ -154,8 +157,9 @@ export default function AdminAuditPage() {
 
       if (!query) return true;
 
+      const displayName = getProfileDisplayName(profile).toLowerCase();
       return (
-        profile.name?.toLowerCase().includes(query) ||
+        displayName.includes(query) ||
         profile.role?.toLowerCase().includes(query) ||
         profile.id.toLowerCase().includes(query)
       );
@@ -166,7 +170,7 @@ export default function AdminAuditPage() {
       const bTime = b.last_login_at ? new Date(b.last_login_at).getTime() : 0;
       return bTime - aTime;
     });
-  }, [profiles, roleFilter, searchQuery, showRemovedDrivers, driverStatusById]);
+  }, [profiles, roleFilter, searchQuery, showRemovedDrivers, driverStatusById, getProfileDisplayName]);
 
   const filteredProfileIds = useMemo(
     () => new Set(filteredProfiles.map((profile) => profile.id)),

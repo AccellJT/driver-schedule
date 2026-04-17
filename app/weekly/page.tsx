@@ -6,6 +6,7 @@ import { ComplianceCompactStatus } from "@/components/driverCompliance/Complianc
 import type { ComplianceStatus, EligibilityStatus } from "@/lib/driverCompliance";
 import { supabase } from "@/lib/supabase";
 import { recordAvailabilityActivity, updateLastLogin } from "@/lib/availabilityAudit";
+import { normalizeEmail, normalizePersonName } from "@/lib/driverProfile";
 
 type DriverApprovalStatus = "pending" | "approved" | "blocked";
 type AppRole = "admin" | "dispatch";
@@ -796,8 +797,8 @@ export default function WeeklyPage() {
     setErrorMessage(null);
     setSuccessMessage(null);
 
-    const fullName = newDriverName.trim();
-    const email = newDriverEmail.trim().toLowerCase();
+    const fullName = normalizePersonName(newDriverName);
+    const email = normalizeEmail(newDriverEmail);
     const vehicleLabel = newDriverVehicle.trim();
 
     if (!fullName) {

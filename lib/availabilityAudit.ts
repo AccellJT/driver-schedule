@@ -1,4 +1,5 @@
 import { supabase } from "@/lib/supabase";
+import { normalizePersonName } from "@/lib/driverProfile";
 
 export type AvailabilityAuditAction =
   | "availability.slot_added"
@@ -67,7 +68,7 @@ export async function recordAvailabilityActivity({
           .single();
 
         if (!driverError && driver) {
-          actorName = driver.full_name;
+          actorName = normalizePersonName(driver.full_name);
         }
       }
     } else if (profileError) {
@@ -83,7 +84,7 @@ export async function recordAvailabilityActivity({
       .single();
 
     if (!targetDriverError && targetDriver) {
-      targetDriverName = targetDriver.full_name;
+      targetDriverName = normalizePersonName(targetDriver.full_name);
     }
   }
 

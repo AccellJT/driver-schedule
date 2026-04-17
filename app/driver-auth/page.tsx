@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { updateLastLogin } from "@/lib/availabilityAudit";
+import { ensureDriverProfileForUser } from "@/lib/driverProfile";
 
 export default function DriverAuthPage() {
   const router = useRouter();
@@ -21,69 +22,14 @@ export default function DriverAuthPage() {
         return;
       }
 
-      // Load or create profile row
-      let { data: profile } = await supabase
-        .from("profiles")
-        .select("id, role, driver_id")
-        .eq("id", user.id)
-        .maybeSingle();
+      const { error: profileError } = await ensureDriverProfileForUser(
+        user.id,
+        user.email
+      );
 
-      if (!profile) {
-        const { error: insertProfileError } = await supabase
-          .from("profiles")
-          .insert({
-            id: user.id,
-            role: "driver",
-          });
-
-        if (insertProfileError) {
-          setMessage(insertProfileError.message);
-          return;
-        }
-
-        const result = await supabase
-          .from("profiles")
-          .select("id, role, driver_id")
-          .eq("id", user.id)
-          .single();
-
-        profile = result.data ?? null;
-      }
-
-      // Match driver by email, excluding blocked drivers
-      const { data: driver, error: driverError } = await supabase
-        .from("drivers")
-        .select("id, full_name, approval_status")
-        .ilike("email", user.email)
-        .maybeSingle();
-
-      if (driverError) {
-        setMessage(driverError.message);
-        return;
-      }
-
-      if (!driver) {
-        setMessage("No driver record is linked to this email.");
-        return;
-      }
-
-      if (driver.approval_status === "blocked") {
+      if (profileError) {
         await supabase.auth.signOut();
-        setMessage("This driver account has been removed from schedule.");
-        return;
-      }
-
-      const { error: updateProfileError } = await supabase
-        .from("profiles")
-        .update({
-          role: "driver",
-          name: driver.full_name,
-          driver_id: driver.id,
-        })
-        .eq("id", user.id);
-
-      if (updateProfileError) {
-        setMessage(updateProfileError.message);
+        setMessage(profileError.message);
         return;
       }
 

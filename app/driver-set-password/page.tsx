@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import { ensureDriverProfileForUser } from "@/lib/driverProfile";
 
 export default function DriverSetPasswordPage() {
   const router = useRouter();
@@ -71,46 +72,15 @@ export default function DriverSetPasswordPage() {
       return;
     }
 
-    const { data: driver, error: driverError } = await supabase
-      .from("drivers")
-      .select("id, email, full_name, approval_status")
-      .ilike("email", user.email)
-      .maybeSingle();
+    const { error: profileError } = await ensureDriverProfileForUser(
+      user.id,
+      user.email
+    );
 
-    if (driverError) {
-      setIsSaving(false);
-      setErrorMessage(driverError.message);
-      return;
-    }
-
-    if (!driver) {
-      setIsSaving(false);
-      setErrorMessage("No driver record matches this email.");
-      return;
-    }
-
-    if (driver.approval_status === "blocked") {
+    if (profileError) {
       await supabase.auth.signOut();
       setIsSaving(false);
-      setErrorMessage("This driver account has been removed from schedule.");
-      return;
-    }
-
-    const { error: profileUpsertError } = await supabase
-      .from("profiles")
-      .upsert(
-        {
-          id: user.id,
-          role: "driver",
-          name: driver.full_name,
-          driver_id: driver.id,
-        },
-        { onConflict: "id" }
-      );
-
-    if (profileUpsertError) {
-      setIsSaving(false);
-      setErrorMessage(profileUpsertError.message);
+      setErrorMessage(profileError.message);
       return;
     }
 
