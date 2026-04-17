@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import { updateLastLogin } from "@/lib/availabilityAudit";
 
 export default function DriverAuthPage() {
   const router = useRouter();
@@ -85,6 +86,7 @@ export default function DriverAuthPage() {
         return;
       }
 
+      await updateLastLogin(user.id);
       router.replace("/availability");
     }
 

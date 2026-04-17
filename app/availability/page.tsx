@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import { recordAvailabilityActivity, updateLastLogin } from "@/lib/availabilityAudit";
 
 type DriverApprovalStatus = "pending" | "approved" | "blocked";
 type AppRole = "admin" | "dispatch" | "driver" | "ops" | "manager";
@@ -100,6 +101,18 @@ function formatTime(value: string) {
   const suffix = hours >= 12 ? "pm" : "am";
   const hour12 = hours % 12 === 0 ? 12 : hours % 12;
   return `${hour12}:${minutes.toString().padStart(2, "0")} ${suffix}`;
+}
+
+function formatServiceDate(value: string) {
+  const [year, month, day] = value.split("-").map(Number);
+  return `${month}/${day}`;
+}
+
+function formatSlotDescription(slot: Pick<AvailabilitySlot, "service_date" | "start_time" | "end_time" | "availability_type">) {
+  const prefix = slot.availability_type === "available" ? "Available" : "Unavailable";
+  return `${prefix} slot ${formatTime(slot.start_time)} - ${formatTime(slot.end_time)} on ${formatServiceDate(
+    slot.service_date
+  )}`;
 }
 
 function normalizeTime(value: string) {
@@ -280,6 +293,8 @@ export default function AvailabilityPage() {
         router.push("/driver-login");
         return;
       }
+
+      await updateLastLogin(user.id);
 
       if (profile.role === "driver") {
         if (!profile.driver_id) {
@@ -654,6 +669,30 @@ export default function AvailabilityPage() {
       return;
     }
 
+    const auditResult = await recordAvailabilityActivity({
+      action: "availability.slot_added",
+      details:
+        rowsToInsert.length === 1
+          ? `Added ${formatSlotDescription({
+              service_date: rowsToInsert[0].service_date,
+              start_time: rowsToInsert[0].start_time,
+              end_time: rowsToInsert[0].end_time,
+              availability_type: rowsToInsert[0].availability_type,
+            })} for driver ${selectedDriverId}`
+          : `Added ${rowsToInsert.length} availability slots for driver ${selectedDriverId} from ${formatTime(
+              targetStartTime
+            )} - ${formatTime(targetEndTime)} on ${formatServiceDate(selectedDates[0])}${
+              selectedDates.length > 1 ? ` through ${formatServiceDate(selectedDates[selectedDates.length - 1])}` : ""
+            }`,
+      targetDriverId: selectedDriverId,
+      source: "availability.page",
+      eventMetadata: { count: rowsToInsert.length, availabilityType, dates: selectedDates },
+    });
+
+    if (auditResult.error) {
+      console.error("Audit logging failed for availability slot add", auditResult.error);
+    }
+
     setAvailabilityType("available");
     const duplicatesSkipped = selectedDates.length - rowsToInsert.length;
     setSuccessMessage(
@@ -677,6 +716,30 @@ export default function AvailabilityPage() {
     if (error) {
       setErrorMessage(error.message);
       return;
+    }
+
+    const deletedSlot = slots.find((slot) => slot.id === slotId);
+
+    const auditResult = await recordAvailabilityActivity({
+      action: "availability.slot_deleted",
+      details: deletedSlot
+        ? `Deleted ${formatSlotDescription(deletedSlot)} for driver ${selectedDriverId}`
+        : `Availability slot ${slotId} deleted for driver ${selectedDriverId}`,
+      targetDriverId: selectedDriverId,
+      source: "availability.page",
+      eventMetadata: deletedSlot
+        ? {
+            slotId: deletedSlot.id,
+            service_date: deletedSlot.service_date,
+            start_time: deletedSlot.start_time,
+            end_time: deletedSlot.end_time,
+            availability_type: deletedSlot.availability_type,
+          }
+        : { slotId },
+    });
+
+    if (auditResult.error) {
+      console.error("Audit logging failed for availability slot delete", auditResult.error);
     }
 
     setSuccessMessage("Availability removed.");
@@ -809,6 +872,20 @@ export default function AvailabilityPage() {
       setErrorMessage(error.message);
       return;
     }
+
+    await recordAvailabilityActivity({
+      action: "availability.week_copied",
+      details: `Copied ${rowsToInsert.length} availability slot${rowsToInsert.length === 1 ? "" : "s"} from week ${formatWeekRangeLabel(
+        sourceWeekStart
+      )} to ${formatWeekRangeLabel(targetWeekStart)} for driver ${selectedDriverId}`,
+      targetDriverId: selectedDriverId,
+      source: "availability.page",
+      eventMetadata: {
+        copiedCount: rowsToInsert.length,
+        sourceWeekStart,
+        targetWeekStart,
+      },
+    });
 
     const duplicatesSkipped = sourceItems.length - rowsToInsert.length;
     setSuccessMessage(

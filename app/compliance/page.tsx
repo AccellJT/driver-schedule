@@ -159,12 +159,20 @@ export default function ComplianceDashboardPage() {
           </p>
         </div>
 
-        <Link
-          href={returnHref}
-          className="rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
-        >
-          {returnLabel}
-        </Link>
+        <div className="flex flex-wrap gap-2">
+          <Link
+            href="/admin/audit"
+            className="rounded bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800"
+          >
+            Availability audit
+          </Link>
+          <Link
+            href={returnHref}
+            className="rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+          >
+            {returnLabel}
+          </Link>
+        </div>
       </div>
 
       {isAdmin && (

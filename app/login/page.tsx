@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { supabase } from "@/lib/supabase";
+import { updateLastLogin } from "@/lib/availabilityAudit";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -59,6 +60,7 @@ export default function LoginPage() {
       return;
     }
 
+    await updateLastLogin(user.id);
     setIsLoading(false);
     router.push("/weekly");
     router.refresh();

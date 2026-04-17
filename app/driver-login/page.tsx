@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { supabase } from "@/lib/supabase";
+import { updateLastLogin } from "@/lib/availabilityAudit";
 
 export default function DriverLoginPage() {
   const router = useRouter();
@@ -28,6 +29,11 @@ export default function DriverLoginPage() {
     if (error) {
       setErrorMessage(error.message);
       return;
+    }
+
+    const { data } = await supabase.auth.getUser();
+    if (data.user) {
+      await updateLastLogin(data.user.id);
     }
 
     router.push("/availability");

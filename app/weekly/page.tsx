@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { ComplianceCompactStatus } from "@/components/driverCompliance/ComplianceCompactStatus";
 import type { ComplianceStatus, EligibilityStatus } from "@/lib/driverCompliance";
 import { supabase } from "@/lib/supabase";
+import { recordAvailabilityActivity, updateLastLogin } from "@/lib/availabilityAudit";
 
 type DriverApprovalStatus = "pending" | "approved" | "blocked";
 type AppRole = "admin" | "dispatch";
@@ -78,6 +79,18 @@ function formatSlotTime(value: string) {
   return minutes === 0
     ? `${hour12}${suffix}`
     : `${hour12}:${minutes.toString().padStart(2, "0")} ${suffix}`;
+}
+
+function formatServiceDate(value: string) {
+  const [year, month, day] = value.split("-").map(Number);
+  return `${month}/${day}`;
+}
+
+function formatSlotDescription(slot: Pick<AvailabilitySlot, "service_date" | "start_time" | "end_time" | "availability_type">) {
+  const prefix = slot.availability_type === "available" ? "Available" : "Unavailable";
+  return `${prefix} slot ${formatSlotTime(slot.start_time)} - ${formatSlotTime(slot.end_time)} on ${formatServiceDate(
+    slot.service_date
+  )}`;
 }
 
 function addDaysToIso(baseIso: string, days: number): string {
@@ -255,6 +268,10 @@ export default function WeeklyPage() {
     Record<string, { start_time: string; end_time: string; availability_type: "available" | "unavailable" }>
   >({});
   const [isSavingCell, setIsSavingCell] = useState(false);
+  const [driverRequestedAvailabilityUpdate, setDriverRequestedAvailabilityUpdate] = useState(false);
+  const [driverSearch, setDriverSearch] = useState("");
+  const [showAvailable, setShowAvailable] = useState(true);
+  const [showUnavailable, setShowUnavailable] = useState(true);
   const [confirmRemoveDriverId, setConfirmRemoveDriverId] = useState<string | null>(null);
   const [authChecked, setAuthChecked] = useState(false);
   const [currentRole, setCurrentRole] = useState<AppRole | null>(null);
@@ -360,6 +377,35 @@ export default function WeeklyPage() {
     });
   }, [drivers, unavailableDriverIds, activeNowDriverIds, todayDriverIds, viewMode, selectedDayDriverIds]);
 
+  const filteredDrivers = useMemo(() => {
+    const query = driverSearch.trim().toLowerCase();
+    const baseDrivers = sortedDrivers.filter((driver) => {
+      if (!query) return true;
+      return (
+        driver.full_name.toLowerCase().includes(query) ||
+        driver.vehicle_label?.toLowerCase().includes(query)
+      );
+    });
+
+    if (showAvailable && showUnavailable) {
+      return baseDrivers;
+    }
+
+    const visibleDayIsos = new Set(weekDays.map((day) => day.iso));
+    const matchingDriverIds = new Set(
+      slots
+        .filter(
+          (slot) =>
+            visibleDayIsos.has(slot.service_date) &&
+            ((showAvailable && slot.availability_type === "available") ||
+              (showUnavailable && slot.availability_type === "unavailable"))
+        )
+        .map((slot) => slot.driver_id)
+    );
+
+    return baseDrivers.filter((driver) => matchingDriverIds.has(driver.id));
+  }, [sortedDrivers, driverSearch, showAvailable, showUnavailable, slots, weekDays]);
+
   useEffect(() => {
     async function checkAccess() {
       const {
@@ -387,6 +433,7 @@ export default function WeeklyPage() {
         return;
       }
 
+      await updateLastLogin(user.id);
       setCurrentRole(profile.role as AppRole);
       setAuthChecked(true);
     }
@@ -471,6 +518,17 @@ export default function WeeklyPage() {
   }, [viewMode, selectedDay]);
 
   useEffect(() => {
+    if (!editingCell) {
+      setDriverRequestedAvailabilityUpdate(false);
+      return;
+    }
+
+    setDriverRequestedAvailabilityUpdate(
+      currentRole === "dispatch" || currentRole === "admin"
+    );
+  }, [editingCell, currentRole]);
+
+  useEffect(() => {
     if (!authChecked) return;
 
     const loadTimer = window.setTimeout(() => {
@@ -544,7 +602,38 @@ export default function WeeklyPage() {
       return;
     }
 
-    setSuccessMessage("Availability added.");
+    const auditResult = await recordAvailabilityActivity({
+      action: "availability.slot_added",
+      details: `Added ${formatSlotDescription({
+        service_date: editingCell.serviceDate,
+        start_time: newSlot.start_time,
+        end_time: newSlot.end_time,
+        availability_type: newSlot.availability_type,
+      })}`,
+      targetDriverId: editingCell.driverId,
+      source: "weekly.page",
+      eventMetadata: {
+        service_date: editingCell.serviceDate,
+        start_time: newSlot.start_time,
+        end_time: newSlot.end_time,
+        availability_type: newSlot.availability_type,
+      },
+    });
+    if (auditResult.error) {
+      console.error(
+        "Audit logging failed for weekly slot add: " +
+          JSON.stringify(auditResult, null, 2)
+      );
+      setErrorMessage(
+        `Availability added, but audit logging failed: ${auditResult.error.message || "unknown error"}`
+      );
+    }
+
+    setSuccessMessage(
+      driverRequestedAvailabilityUpdate
+        ? "Availability added. Driver requested availability update."
+        : "Availability added."
+    );
     setNewSlot({ start_time: "08:00", end_time: "10:00", availability_type: "available" });
     await loadData();
   }
@@ -563,7 +652,37 @@ export default function WeeklyPage() {
       return;
     }
 
-    setSuccessMessage("Availability removed.");
+    const deletedSlot = activeCellSlots.find((slot) => slot.id === slotId);
+
+    const auditResult = await recordAvailabilityActivity({
+      action: "availability.slot_deleted",
+      details: deletedSlot
+        ? `Deleted ${formatSlotDescription(deletedSlot)}`
+        : `Deleted availability slot ${slotId} from weekly board`,
+      targetDriverId: deletedSlot?.driver_id ?? null,
+      source: "weekly.page",
+      eventMetadata: deletedSlot
+        ? {
+            slotId: deletedSlot.id,
+            service_date: deletedSlot.service_date,
+            start_time: deletedSlot.start_time,
+            end_time: deletedSlot.end_time,
+            availability_type: deletedSlot.availability_type,
+          }
+        : { slotId },
+    });
+    if (auditResult.error) {
+      console.error("Audit logging failed for weekly slot delete", auditResult.error);
+      setErrorMessage(
+        `Availability removed, but audit logging failed: ${auditResult.error.message || "unknown error"}`
+      );
+    }
+
+    setSuccessMessage(
+      driverRequestedAvailabilityUpdate
+        ? "Availability removed. Driver requested availability update."
+        : "Availability removed."
+    );
     await loadData();
   }
 
@@ -605,13 +724,50 @@ export default function WeeklyPage() {
       return;
     }
 
+    const updatedSlot = {
+      ...slot,
+      start_time: target.start_time,
+      end_time: target.end_time,
+      availability_type: target.availability_type,
+    };
+
+    const auditResult = await recordAvailabilityActivity({
+      action: "availability.slot_updated",
+      details: `Updated ${formatSlotDescription(slot)} to ${formatSlotDescription(updatedSlot)}`,
+      targetDriverId: slot.driver_id,
+      source: "weekly.page",
+      eventMetadata: {
+        slotId: slot.id,
+        old: {
+          start_time: slot.start_time,
+          end_time: slot.end_time,
+          availability_type: slot.availability_type,
+        },
+        updated: {
+          start_time: target.start_time,
+          end_time: target.end_time,
+          availability_type: target.availability_type,
+        },
+      },
+    });
+    if (auditResult.error) {
+      console.error("Audit logging failed for weekly slot update", auditResult.error);
+      setErrorMessage(
+        `Availability updated, but audit logging failed: ${auditResult.error.message || "unknown error"}`
+      );
+    }
+
     setEditedSlots((prev) => {
       const next = { ...prev };
       delete next[slot.id];
       return next;
     });
 
-    setSuccessMessage("Availability updated.");
+    setSuccessMessage(
+      driverRequestedAvailabilityUpdate
+        ? "Availability updated. Driver requested availability update."
+        : "Availability updated."
+    );
     await loadData();
   }
 
@@ -718,80 +874,136 @@ export default function WeeklyPage() {
 
   return (
     <div className="min-h-screen p-6 md:p-10">
-      <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold">Accell - Weekly Driver Availability</h1>
-          <p className="mt-1 text-sm text-gray-500">
-            Manage driver schedules and move between weekly and availability views.
-          </p>
+      <div className="mb-6 space-y-4">
+        <div className="flex flex-col gap-4 rounded-3xl border border-zinc-800/20 bg-zinc-900/70 p-4 text-white shadow-sm sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <h1 className="text-2xl font-semibold">Accell - Weekly Driver Availability</h1>
+            <p className="mt-1 text-sm text-zinc-300">Manage driver availability efficiently.</p>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              onClick={() => router.push("/weekly")}
+              className="rounded bg-blue-700 px-4 py-2 text-sm font-medium text-white"
+            >
+              Weekly
+            </button>
+            <button
+              onClick={() => router.push("/availability")}
+              className="rounded bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700"
+            >
+              Availability
+            </button>
+            <button
+              onClick={() => setIsAddDriverOpen(true)}
+              disabled={isAddingDriver}
+              className="rounded bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700 disabled:opacity-50"
+            >
+              Add driver
+            </button>
+            <button
+              onClick={() => loadData()}
+              className="rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+            >
+              Refresh
+            </button>
+            {currentRole === "admin" && (
+              <button
+                onClick={() => router.push("/admin/audit")}
+                className="rounded bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800"
+              >
+                Availability audit
+              </button>
+            )}
+            <button
+              onClick={handleLogout}
+              className="rounded border border-zinc-700 bg-zinc-950 px-4 py-2 text-sm font-medium text-zinc-200 hover:bg-zinc-800"
+            >
+              Log out
+            </button>
+          </div>
         </div>
 
-        <div className="flex flex-wrap gap-2">
-          <button
-            onClick={() => router.push("/weekly")}
-            className="rounded bg-blue-700 px-4 py-2 text-sm font-medium text-white"
-          >
-            Weekly
-          </button>
-
-          <button
-            onClick={() => router.push("/availability")}
-            className="rounded bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700"
-          >
-            Availability
-          </button>
-
-          <input
-            type="date"
-            value={selectedDay}
-            min={todayIso}
-            onChange={(e) => {
-              if (!e.target.value) return;
-              setSelectedDay(e.target.value);
-              setViewMode("day");
-            }}
-            className={`rounded border px-2 py-1.5 text-sm ${
-              viewMode === "day"
-                ? "border-blue-700 bg-blue-700 text-white [color-scheme:dark]"
-                : "border-gray-300 bg-white text-gray-700"
-            }`}
-          />
-
-          {([3, 7, "all"] as const).map((n) => (
+        <div className="grid gap-3 lg:grid-cols-[1.2fr_0.8fr]">
+          <div className="flex flex-wrap items-center gap-3 rounded-3xl border border-zinc-200 bg-white p-3 shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
+            <input
+              type="search"
+              value={driverSearch}
+              onChange={(e) => setDriverSearch(e.target.value)}
+              placeholder="Search drivers"
+              className="min-w-[220px] flex-1 rounded border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-200 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-100 dark:focus:border-blue-400 dark:focus:ring-blue-900"
+            />
             <button
-              key={String(n)}
-              onClick={() => setViewMode(n)}
-              className={`rounded px-3 py-2 text-sm font-medium ${
-                viewMode === n
-                  ? "bg-blue-700 text-white"
-                  : "bg-gray-200 text-gray-700 hover:bg-gray-300"
+              type="button"
+              onClick={() => setShowAvailable((current) => !current)}
+              aria-pressed={showAvailable}
+              className={`rounded-full px-3 py-2 text-sm font-medium transition ${
+                showAvailable
+                  ? "bg-blue-700 text-white shadow-sm"
+                  : "border border-zinc-300 bg-white text-zinc-700 hover:bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-300 dark:hover:bg-zinc-900"
               }`}
             >
-              {n === 3 ? "3 day" : n === 7 ? "7 day" : "All"}
+              Available
             </button>
-          ))}
+            <button
+              type="button"
+              onClick={() => setShowUnavailable((current) => !current)}
+              aria-pressed={showUnavailable}
+              className={`rounded-full px-3 py-2 text-sm font-medium transition ${
+                showUnavailable
+                  ? "bg-red-600 text-white shadow-sm"
+                  : "border border-zinc-300 bg-white text-zinc-700 hover:bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-300 dark:hover:bg-zinc-900"
+              }`}
+            >
+              Unavailable
+            </button>
+          </div>
 
-          <button
-            onClick={() => setIsAddDriverOpen(true)}
-            disabled={isAddingDriver}
-            className="rounded bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700 disabled:opacity-50"
-          >
-            Add driver
-          </button>
-
-          <button
-            onClick={() => loadData()}
-            className="rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
-          >
-            Refresh
-          </button>
-
-          <button
-            onClick={handleLogout}
-            className="rounded border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100"
-          >
-            Log out
-          </button>
+          <div className="grid gap-3 rounded-3xl border border-zinc-200 bg-white p-3 shadow-sm dark:border-zinc-800 dark:bg-zinc-950 sm:grid-cols-[1fr_auto] sm:items-center">
+            <input
+              type="date"
+              value={selectedDay}
+              min={todayIso}
+              onChange={(e) => {
+                if (!e.target.value) return;
+                setSelectedDay(e.target.value);
+                setViewMode("day");
+              }}
+              className={`rounded border px-3 py-2 text-sm ${
+                viewMode === "day"
+                  ? "border-blue-700 bg-blue-700 text-white [color-scheme:dark]"
+                  : "border-zinc-300 bg-white text-zinc-900"
+              }`}
+            />
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              <button
+                onClick={() => {
+                  setSelectedDay(todayIso);
+                  setViewMode("day");
+                }}
+                className={`rounded px-3 py-2 text-sm font-medium ${
+                  viewMode === "day" && selectedDay === todayIso
+                    ? "bg-blue-700 text-white"
+                    : "bg-zinc-200 text-zinc-700 hover:bg-zinc-300 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-700"
+                }`}
+              >
+                Today
+              </button>
+              {([3, 7, "all"] as const).map((n) => (
+                <button
+                  key={String(n)}
+                  onClick={() => setViewMode(n)}
+                  className={`rounded px-3 py-2 text-sm font-medium ${
+                    viewMode === n
+                      ? "bg-blue-700 text-white"
+                      : "bg-zinc-200 text-zinc-700 hover:bg-zinc-300 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-700"
+                  }`}
+                >
+                  {n === 3 ? "3 day" : n === 7 ? "7 day" : "All"}
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
       </div>
 
@@ -843,7 +1055,7 @@ export default function WeeklyPage() {
           </thead>
 
           <tbody>
-            {sortedDrivers.map((driver) => (
+            {filteredDrivers.map((driver) => (
               <tr key={driver.id} className="border-b align-top">
                 <td
                   className={`p-2 align-top text-right ${
@@ -1017,6 +1229,18 @@ export default function WeeklyPage() {
               Driver: {drivers.find((d) => d.id === editingCell.driverId)?.full_name || "Unknown"}
               <br />
               Date: {editingCell.serviceDate}
+            </div>
+
+            <div className="mb-4 flex items-center gap-3 text-sm">
+              <label className="inline-flex items-center gap-2 rounded border border-gray-200 bg-white px-3 py-2 text-gray-700">
+                <input
+                  type="checkbox"
+                  checked={driverRequestedAvailabilityUpdate}
+                  onChange={(e) => setDriverRequestedAvailabilityUpdate(e.target.checked)}
+                  className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                />
+                <span>Driver requested availability update</span>
+              </label>
             </div>
 
             <div className="space-y-2">
