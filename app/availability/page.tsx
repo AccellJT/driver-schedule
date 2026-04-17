@@ -1655,7 +1655,7 @@ export default function AvailabilityPage() {
               Add Driver Availability
             </h2>
             <p className="text-sm text-blue-800 dark:text-blue-200">
-              Primary action area for driver schedule entry.
+              Enter your availability here.
             </p>
           </div>
 
