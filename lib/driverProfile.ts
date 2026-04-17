@@ -40,11 +40,16 @@ export async function getDriverByEmail(email: string) {
     return { data: null, error: new Error("Invalid email address.") };
   }
 
-  return await supabase
+  const result = await supabase
     .from("drivers")
-    .select<DriverRecord>("id, full_name, email, approval_status")
+    .select("id, full_name, email, approval_status")
     .ilike("email", normalizedEmail)
     .maybeSingle();
+
+  return {
+    data: result.data as DriverRecord | null,
+    error: result.error,
+  };
 }
 
 export async function upsertDriverProfileForUser(userId: string, driver: DriverRecord) {
